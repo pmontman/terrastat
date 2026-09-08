@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: "terrastat: public time series from the world's statistical agencies, with provenance attached"
+message: >-
+  If you use this software or a corpus built with it, please cite it.
+  The data itself carries separate attribution requirements from the
+  statistical agencies that published it — see ATTRIBUTIONS.md in any
+  snapshot, and the per-series `attribution` column.
+type: software
+authors:
+  - family-names: Montero-Manso
+    given-names: Pablo
+    affiliation: University of Sydney
+    # orcid: "https://orcid.org/0000-0000-0000-0000"   # fill in
+repository-code: "https://github.com/pmontman/terrastat"
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-09-08"
+keywords:
+  - time series
+  - forecasting
+  - economic data
+  - FRED
+  - Eurostat
+  - OECD
+  - dataset
+abstract: >-
+  terrastat gathers public economic time series from FRED, Eurostat and the
+  OECD into a tidy, licence-aware Parquet database. Every series resolves to
+  one uniform 36-column schema carrying its own licence, attribution text and
+  provenance, so a redistributable subset can be selected and published with
+  the citations each source requires. It includes tools for assessing the
+  corpus — length, recency, information content, aggregation hierarchies —
+  and for the leakage that arises when three sources republish one another.

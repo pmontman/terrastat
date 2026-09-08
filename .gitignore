@@ -1,0 +1,23 @@
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.idea/
+.claude/
+
+# derived analysis output; regenerate with `terrastat quality --out reports/quality`
+reports/
+
+.ipynb_checkpoints/
+
+# a generated copy of MANUAL.md, published as an artifact instead
+docs/manual.html
+
+# scratch
+*.part
+_*_preview.html

@@ -1,0 +1,55 @@
+terrastat
+Copyright 2026 Pablo Montero-Manso
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Not affiliated with, endorsed by, or connected to Eurostat, the OECD, the
+Federal Reserve Bank of St. Louis, or any statistical agency. The name is a
+description of what the tool gathers, not a claim of provenance.
+
+================================================================================
+THE DATA THIS SOFTWARE DOWNLOADS IS NOT COVERED BY THAT LICENCE
+================================================================================
+
+The Apache 2.0 grant above covers this software. It does not cover, and cannot
+grant any rights over, the statistical data the software retrieves. Each series
+carries its own terms from the body that published it.
+
+Those terms travel with the data itself, in every row of the series layer and of
+any exported snapshot:
+
+    license_id          which licence applies
+    license_name        its name
+    license_url         where to read it
+    license_detail      the source's own status string
+    attribution         the exact citation that source asks for
+    license_notes       caveats
+    origin_agencies     who actually produced the numbers
+    origin_us_federal   whether a US federal body did, which decides copyright
+
+In outline, as verified in September 2026:
+
+  Eurostat   Free re-use for commercial and non-commercial purposes provided the
+             source is acknowledged (Commission Decision 2011/833/EU).
+             https://ec.europa.eu/eurostat/web/main/help/copyright-notice
+
+  OECD       Extraction, adaptation and distribution for any purpose including
+             commercial, with the citation given in the metadata. Third-party
+             data within OECD datasets is excepted and may carry other terms.
+             https://www.oecd.org/en/about/terms-conditions.html
+
+  FRED       A mixture, and the one that needs care. Series FRED marks
+             "Public Domain: Citation Requested" whose originating body is a US
+             federal one carry no copyright of their own (17 U.S.C. 105).
+             Everything else is copyrighted by the agency that produced it and
+             may not be redistributable. FRED itself republishes OECD, World
+             Bank, IMF, BIS and Eurostat series, which keep their own terms.
+             https://fred.stlouisfed.org/legal/
+
+`terrastat export --public-only` selects the subset that may be redistributed and
+writes an ATTRIBUTIONS.md beside it with the citations those sources require.
+Without that flag, the export prints a warning naming every licence included —
+but the filter, not the warning, is what makes a snapshot safe to publish.
+
+Determining whether a particular use is permitted remains the responsibility of
+whoever publishes the data. Nothing here is legal advice.
