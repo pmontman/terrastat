@@ -1,0 +1,5 @@
+# Normalise line endings so the repo is the same on Windows, macOS and Linux.
+* text=auto eol=lf
+
+# Notebooks are JSON: keep them diffable but don't let GitHub count them as source.
+*.ipynb linguist-documentation
