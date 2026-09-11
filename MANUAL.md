@@ -276,6 +276,7 @@ Each line in the state file carries one of these statuses:
 | `done` | fetched and tidied | no |
 | `raw` | downloaded but not tidied (`--raw-only`) | on a normal run |
 | `failed` | something went wrong; the error is on the line | yes, with `--retry-failed` |
+| `throttled` | the source was rate-limiting us and the retries ran out; nothing is wrong with the dataset | yes, on the next run |
 | `too_large` | past `--max-download-gb` and not splittable | no, raise the cap instead |
 | `not_timeseries` | a questionnaire or cross-section: no time dimension | no, retrying cannot help |
 | `no_data` | listed in the catalogue but the source holds no observations (SDMX answers 404), or registered in the OECD public API while defined in another OECD space | no, same reason |
@@ -373,6 +374,26 @@ A training loop reads one shard at a time, so memory stays flat on a laptop. Opt
 `--sources fred eurostat`, `--freq M`, `--license-ids ...`, `--target-mb`, `--seed`,
 `--float64`, `--columns` (keep only some columns). The notebook in `notebooks\` shows how to
 iterate the shards into batches.
+
+## 6b0. The one page to read first: `corpus`
+
+```powershell
+.\.venv\Scripts	errastat corpus
+```
+
+Writes two files from one set of tables, so they can never disagree: `docs/index.html`, the
+project page to open in a browser or publish with GitHub Pages, and `docs/corpus.md`, the same
+figures as a markdown annex for reading inside the repository. Both say how many series there are,
+how many have at least two years of their own frequency, how many are still being published, how
+repetitive the values are and how much of each frequency comes from a handful of enormous tables.
+It is generated, not written — **regenerate it after every crawl and after adding a source**, and
+never edit it by hand.
+
+Counts, lengths and recency are exact over the whole corpus (they read scalar columns only, so a
+billion series takes seconds). Distinctness and sign are sampled, and the page labels them so a
+sampled share is never mistaken for a population count. Recency is measured against the newest
+`retrieved_at` in the corpus rather than today, because otherwise a daily series looks stale the
+moment the crawl ends.
 
 ## 6b2. Is the data any good? `quality`
 

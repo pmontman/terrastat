@@ -1,0 +1,36 @@
+# Tests, plus a guard that the generated pages still match the figures they were generated from.
+#
+# The corpus itself is 30 GB of Parquet on a researcher's machine and will never be here, so this
+# cannot tell you whether the figures are current with the latest crawl -- only that nobody edited
+# a generated page by hand, and that a change to a renderer was accompanied by regenerating what it
+# renders. Freshness is a local question: re-run `terrastat corpus` after a crawl.
+name: checks
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  docs-are-generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: docs/index.html and docs/corpus.md match docs/corpus_tables.json
+        run: terrastat corpus --check
