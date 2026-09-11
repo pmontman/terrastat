@@ -7,6 +7,10 @@ message: >-
   snapshot, and the per-series `attribution` column.
 type: software
 authors:
+  - family-names: Rosales Saiz
+    given-names: Iker
+    # affiliation: ""                                # fill in
+    # orcid: "https://orcid.org/0000-0000-0000-0000" # fill in
   - family-names: Montero-Manso
     given-names: Pablo
     affiliation: University of Sydney

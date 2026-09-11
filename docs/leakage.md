@@ -282,4 +282,4 @@ documented as a limitation of a latest-revision corpus.
 | metadata only — `units`, `s_adj`, `_T` codes, dataset-code suffixes, `origin_agencies`, `end_date`, flags | A1, A2, C2, D, G, H, J | seconds; scalar columns only |
 | value hashing on the aligned cohort | J, K | minutes |
 | identity tests within a dataset (sums, YoY, ratios) | A3, A4, B, C1, C3, C5 | hours; needs `values`, but only within a dataset |
-| pairwise correlation across the whole corpus | everything else | infeasible at 956M series; restrict to the cohort |
+| pairwise correlation across the whole corpus | everything else | infeasible at 1.05B series; restrict to the cohort |

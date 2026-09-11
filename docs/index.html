@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A dataset of the world&#39;s economic time series: FRED, Eurostat and the OECD on one uniform schema, with the licence of every series attached.">
+<meta name="color-scheme" content="light dark">
+<title>terrastat</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --paper: #f7f8fa;
+  --panel: #ffffff;
+  --ink: #151a21;
+  --muted: #5c6779;
+  --rule: #dce1e9;
+  --exact: #2743c4;
+  --sampled: #9a6b0b;
+  --exact-wash: #eaeefb;
+  --sampled-wash: #f7f0e0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1016;
+    --panel: #141922;
+    --ink: #e4e8ef;
+    --muted: #8d97a8;
+    --rule: #212832;
+    --exact: #8aa0ff;
+    --sampled: #dfaa43;
+    --exact-wash: #171e33;
+    --sampled-wash: #241d10;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1016;
+  --panel: #141922;
+  --ink: #e4e8ef;
+  --muted: #8d97a8;
+  --rule: #212832;
+  --exact: #8aa0ff;
+  --sampled: #dfaa43;
+  --exact-wash: #171e33;
+  --sampled-wash: #241d10;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+.prose { max-width: 68ch; }
+
+h1, h2, h3 { font-family: Newsreader, ui-serif, Georgia, serif; font-weight: 500;
+  letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+h2 { font-size: 1.75rem; line-height: 1.2; }
+h3 { font-size: 1.15rem; line-height: 1.3; }
+p { margin: 0 0 1em; }
+a { color: var(--exact); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--exact); outline-offset: 3px; border-radius: 2px; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+code { font-size: 0.87em; }
+
+.eyebrow {
+  font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin: 0 0 0.9rem;
+}
+
+/* -- masthead: figures under hairline rules, the way a statistical annex opens -- */
+
+header.top {
+  border-bottom: 1px solid var(--rule);
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+header.top .wrap {
+  display: flex; align-items: baseline; gap: 1.25rem;
+  padding-top: 0.7rem; padding-bottom: 0.7rem;
+}
+header.top .name { font-family: Newsreader, serif; font-size: 1.1rem; font-weight: 600; }
+header.top nav { margin-left: auto; display: flex; gap: 1.1rem; font-size: 0.85rem; }
+header.top nav a { color: var(--muted); text-decoration: none; }
+header.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+.hero { padding: 4.5rem 0 2.5rem; }
+.hero h1 { font-size: clamp(2.6rem, 6vw, 4.1rem); line-height: 1.02; margin-bottom: 1rem; }
+.hero .lede { font-size: 1.18rem; color: var(--muted); max-width: 60ch; }
+.hero .lede strong { color: var(--ink); font-weight: 500; }
+.hero .status {
+  margin: 1.4rem 0 0; font-size: 0.9rem; color: var(--muted); max-width: 58ch;
+  display: flex; gap: 0.6rem; align-items: baseline;
+}
+.hero .status .dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--exact);
+  transform: translateY(-2px);
+}
+
+.figures {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0; margin: 3rem 0 0;
+  border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule);
+}
+.figures div { padding: 1.1rem 1.2rem 1.2rem 0; }
+.figures .v {
+  font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums;
+  font-size: 1.85rem; line-height: 1; color: var(--exact); font-weight: 500;
+}
+.figures .k { font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; line-height: 1.35; }
+
+section { padding: 3.25rem 0; border-bottom: 1px solid var(--rule); }
+section:last-of-type { border-bottom: 0; }
+
+/* -- tables: a statistical annex, not a set of cards -- */
+
+.scroller { overflow-x: auto; margin-top: 1.5rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; min-width: 640px; }
+caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 0.9rem; }
+th, td { padding: 0.5rem 0.8rem 0.5rem 0; text-align: right; white-space: nowrap;
+  border-bottom: 1px solid var(--rule); }
+th { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--ink); }
+th.group { text-align: center; text-transform: none; letter-spacing: 0; font-size: 0.76rem;
+  color: var(--ink); font-weight: 500; border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.35rem; }
+th.sub { font-size: 0.68rem; }
+thead th { vertical-align: bottom; }
+th:first-child, td:first-child { text-align: left; }
+td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+td.lead { font-weight: 500; }
+tbody tr:hover { background: color-mix(in srgb, var(--exact) 5%, transparent); }
+tfoot td { border-bottom: 0; color: var(--muted); font-size: 0.8rem; padding-top: 0.8rem; }
+
+.chip {
+  font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; padding: 0.1rem 0.36rem;
+  border: 1px solid var(--rule); border-radius: 3px; color: var(--muted); margin-left: 0.45rem;
+}
+.bar { display: block; height: 6px; background: var(--exact); opacity: 0.75; border-radius: 1px;
+  min-width: 2px; }
+.bar.dim { background: var(--muted); opacity: 0.35; }
+td.barcell { width: 130px; padding-right: 0; }
+
+/* -- exact vs sampled, the one distinction the page is built around -- */
+
+.legend { display: flex; flex-wrap: wrap; gap: 1.4rem; font-size: 0.82rem; color: var(--muted);
+  margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid var(--rule); }
+.legend span { display: inline-flex; align-items: center; gap: 0.5rem; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; }
+.swatch.e { background: var(--exact); }
+.swatch.s { background: var(--sampled); }
+.tag {
+  display: inline-block; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+  font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 3px; vertical-align: 0.25em;
+  margin-left: 0.7rem;
+}
+.tag.e { color: var(--exact); background: var(--exact-wash); }
+.tag.s { color: var(--sampled); background: var(--sampled-wash); }
+.sampled td.num { color: var(--sampled); }
+.exact td.num { color: var(--exact); }
+
+/* -- getting started -- */
+
+pre {
+  background: var(--panel); border: 1px solid var(--rule); border-left: 2px solid var(--exact);
+  padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.83rem; line-height: 1.65;
+  font-family: "IBM Plex Mono", monospace; margin: 0 0 1.2rem;
+}
+pre .c { color: var(--muted); }
+.steps { display: grid; gap: 2rem; margin-top: 1.75rem; }
+@media (min-width: 800px) { .steps { grid-template-columns: 1fr 1fr; } }
+.steps h3 { margin-bottom: 0.6rem; }
+.steps p { font-size: 0.92rem; color: var(--muted); }
+
+.facts { display: grid; gap: 1.6rem 2.5rem; margin-top: 1.75rem; }
+@media (min-width: 760px) { .facts { grid-template-columns: 1fr 1fr; } }
+.facts h3 { font-size: 1rem; margin-bottom: 0.35rem; }
+.facts p { font-size: 0.92rem; color: var(--muted); margin: 0; }
+
+/* -- the schema: four layers, seven column groups, four real rows -- */
+
+.families { display: grid; gap: 1px; margin-top: 1.5rem; background: var(--rule);
+  border: 1px solid var(--rule); }
+@media (min-width: 720px) { .families { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1000px) { .families { grid-template-columns: repeat(3, 1fr); } }
+.family { background: var(--panel); padding: 1.1rem 1.2rem 1.2rem; }
+.family h3 { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem;
+  font-size: 1.02rem; }
+.family .count {
+  font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; color: var(--muted);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 0.05rem 0.45rem;
+}
+.family p { font-size: 0.9rem; color: var(--muted); margin: 0 0 0.8rem; }
+.family .cols { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.family .col {
+  font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; padding: 0.12rem 0.4rem;
+  border: 1px solid var(--rule); border-radius: 3px; color: var(--muted);
+}
+.family.numbers .col, .family.structure .col { color: var(--exact);
+  border-color: var(--exact-wash); background: var(--exact-wash); }
+.family.licence .col { color: var(--sampled); border-color: var(--sampled-wash);
+  background: var(--sampled-wash); }
+
+.specimen-lead { margin: 3rem 0 0; }
+.rows { display: grid; gap: 1.5rem; margin-top: 1.5rem; }
+@media (min-width: 700px) { .rows { grid-template-columns: 1fr 1fr; } }
+.row-card { margin: 0; padding-top: 1rem; border-top: 1px solid var(--ink); color: var(--exact); }
+.row-card figcaption { color: var(--ink); font-size: 0.92rem; margin-bottom: 0.7rem;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35rem; }
+.row-card figcaption .chip { margin-left: 0; }
+.row-card figcaption strong { font-weight: 500; }
+svg.spark { display: block; width: 100%; height: 52px; }
+.row-card .extent { font-size: 0.72rem; color: var(--muted); margin: 0.4rem 0 0.7rem; }
+.row-card .desc { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.7rem; }
+ul.dims { list-style: none; margin: 0; padding: 0; font-size: 0.78rem; color: var(--muted); }
+ul.dims li { padding: 0.18rem 0; border-bottom: 1px dotted var(--rule); }
+ul.dims li:last-child { border-bottom: 0; }
+ul.dims .mono { color: var(--exact); font-size: 0.72rem; margin-right: 0.5rem; }
+
+/* -- curation and leakage -- */
+
+.traps { display: grid; gap: 1.4rem 2.5rem; margin: 1.75rem 0 1.5rem; }
+@media (min-width: 780px) { .traps { grid-template-columns: 1fr 1fr; } }
+.traps h4 { font-family: Newsreader, ui-serif, Georgia, serif; font-size: 1rem; font-weight: 500;
+  margin: 0 0 0.3rem; color: var(--ink); }
+.traps p { font-size: 0.88rem; color: var(--muted); margin: 0; }
+.traps > div { border-left: 2px solid var(--sampled); padding-left: 0.9rem; }
+p.closing { border-top: 1px solid var(--rule); padding-top: 1.2rem; }
+
+/* -- the licensing band, which must not be skimmable past -- */
+
+.licence {
+  border: 1px solid var(--sampled); border-left-width: 3px; background: var(--sampled-wash);
+  padding: 1.5rem 1.6rem; margin-top: 1.5rem;
+}
+.licence h3 { color: var(--sampled); margin-bottom: 0.5rem; }
+.licence p { margin-bottom: 0.7rem; font-size: 0.93rem; }
+.licence p:last-child { margin-bottom: 0; }
+
+footer { padding: 2.5rem 0 4rem; color: var(--muted); font-size: 0.83rem;
+  border-top: 1px solid var(--rule); }
+footer p { margin-bottom: 0.5rem; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <span class="name">terrastat</span>
+  <nav>
+    <a href="#corpus">the corpus</a>
+    <a href="#start">getting started</a>
+    <a href="#schema">the schema</a>
+    <a href="#leakage">leakage</a>
+    <a href="#what">what is in it</a>
+    <a href="#licence">licences</a>
+    <a href="https://github.com/pmontman/terrastat">repository &#8599;</a>
+  </nav>
+</div></header>
+
+<main>
+<div class="wrap">
+
+  <div class="hero">
+    <p class="eyebrow">An open dataset · in progress</p>
+    <h1>A dataset of the world&#8217;s economic time series.</h1>
+    <p class="lede">1.05 B time series of official economic statistics — prices, trade,
+      output, labour, migration, health, energy — collected from <strong>FRED</strong>,
+      <strong>Eurostat</strong> and the <strong>OECD</strong>, and put on one uniform schema so
+      you can train and evaluate models across all of them at once. Every series arrives with its
+      own licence and the credit its publisher asks for, so cutting a subset you are allowed to
+      share is a one-line filter.</p>
+    <p class="status"><i class="dot"></i>Three sources so far, and growing. The schema is built to
+      absorb more, and more are planned — energy, trade and web-activity series among them.</p>
+
+    <div class="figures">
+      <div><div class="v">1.05 B</div><div class="k">series in total</div></div><div><div class="v">7.58 B</div><div class="k">observations in total</div></div><div><div class="v">659.8 M</div><div class="k">with at least 2 years of their own frequency</div></div><div><div class="v">575.9 M</div><div class="k">…and still being published</div></div><div><div class="v">25 M</div><div class="k">…of those, not annual</div></div><div><div class="v">3</div><div class="k">source agencies, with more planned</div></div>
+    </div>
+    <div class="legend">
+      <span><i class="swatch e"></i> exact, over every series</span>
+      <span><i class="swatch s"></i> estimated from a sample</span>
+      <span>&ldquo;still being published&rdquo; = a new observation within the last
+        12 periods of the series&#8217; own frequency, measured against 2026-09-09,
+        the newest retrieval in the corpus</span>
+    </div>
+  </div>
+
+  <section id="corpus">
+    <p class="eyebrow">The corpus</p>
+    <h2>How much data is in it<span class="tag e">exact</span></h2>
+    <p class="prose">How many series there are, how much history each one carries, and how much of
+    it is still being added to. Length is the first thing a modeller asks about and the easiest to
+    answer badly, because two years of data means two observations at annual frequency and
+    twenty-four at monthly — so everything below counts in each series&#8217; own periods, and the
+    spread is measured only among the series long enough to be usable.</p>
+    <div class="scroller"><table><caption>Exact, over every series. The bar is 2 years <em>of the series' own frequency</em> — 2 observations for annual, 24 for monthly. Bars are log-scaled.</caption><thead><tr><th rowspan="2">frequency</th><th rowspan="2"></th><th rowspan="2">&ge; 2 years</th><th rowspan="2">of all</th><th rowspan="2">still published</th><th colspan="3" class="group">how long one series is, in observations</th><th rowspan="2">median, in years</th></tr><tr><th class="sub">shortest 5%</th><th class="sub">median</th><th class="sub">longest 5%</th></tr></thead><tbody>  <tr class="exact"><td>annual<span class="chip">A</span></td><td class="barcell"><span class="bar" style="width:100.0%"></span></td><td class="num lead"><strong>628.5 M</strong></td><td class="num">62% of 1.01 B</td><td class="num">550.8 M</td><td class="num">2</td><td class="num"><strong>4</strong></td><td class="num">24</td><td class="num">4</td></tr>
+  <tr class="exact"><td>monthly<span class="chip">M</span></td><td class="barcell"><span class="bar" style="width:78.8%"></span></td><td class="num lead"><strong>8.6 M</strong></td><td class="num">89% of 9.7 M</td><td class="num">7.5 M</td><td class="num">27</td><td class="num"><strong>66</strong></td><td class="num">294</td><td class="num">5.5</td></tr>
+  <tr class="exact"><td>quarterly<span class="chip">Q</span></td><td class="barcell"><span class="bar" style="width:83.4%"></span></td><td class="num lead"><strong>21.8 M</strong></td><td class="num">78% of 28 M</td><td class="num">16.9 M</td><td class="num">8</td><td class="num"><strong>23</strong></td><td class="num">109</td><td class="num">5.8</td></tr>
+  <tr class="exact"><td>weekly<span class="chip">W</span></td><td class="barcell"><span class="bar" style="width:61.4%"></span></td><td class="num lead"><strong>250.2 k</strong></td><td class="num">98% of 254.8 k</td><td class="num">174.3 k</td><td class="num">312</td><td class="num"><strong>809</strong></td><td class="num">1,384</td><td class="num">15.6</td></tr>
+  <tr class="exact"><td>daily<span class="chip">D</span></td><td class="barcell"><span class="bar" style="width:46.9%"></span></td><td class="num lead"><strong>13.4 k</strong></td><td class="num">96% of 14 k</td><td class="num">12.2 k</td><td class="num">1,029</td><td class="num"><strong>5,607</strong></td><td class="num">6,676</td><td class="num">15.4</td></tr>
+  <tr class="exact"><td>semiannual<span class="chip">S</span></td><td class="barcell"><span class="bar" style="width:48.9%"></span></td><td class="num lead"><strong>20.2 k</strong></td><td class="num">94% of 21.4 k</td><td class="num">12.5 k</td><td class="num">6</td><td class="num"><strong>32</strong></td><td class="num">68</td><td class="num">16</td></tr>
+  <tr class="exact"><td>3-yearly<span class="chip">A3</span></td><td class="barcell"><span class="bar" style="width:64.9%"></span></td><td class="num lead"><strong>517.1 k</strong></td><td class="num">70% of 735.1 k</td><td class="num">517.1 k</td><td class="num">2</td><td class="num"><strong>3</strong></td><td class="num">5</td><td class="num">9</td></tr>
+  <tr class="exact"><td>5-yearly<span class="chip">P</span></td><td class="barcell"><span class="bar" style="width:33.2%"></span></td><td class="num lead"><strong>842</strong></td><td class="num">100% of 842</td><td class="num">842</td><td class="num">10</td><td class="num"><strong>12</strong></td><td class="num">12</td><td class="num">60</td></tr>
+  <tr class="exact"><td>biweekly<span class="chip">BW</span></td><td class="barcell"><span class="bar" style="width:13.7%"></span></td><td class="num lead"><strong>16</strong></td><td class="num">100% of 16</td><td class="num">2</td><td class="num">123</td><td class="num"><strong>905</strong></td><td class="num">1,883</td><td class="num">34.8</td></tr>
+  <tr class=""><td>irregular<span class="chip">I</span></td><td class="barcell"></td><td>n/a</td><td class="num">138.6 k total</td><td>n/a</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+  <tr class=""><td>unknown<span class="chip">OTHER</span></td><td class="barcell"></td><td>n/a</td><td class="num">2.4 M total</td><td>n/a</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr></tbody></table></div>
+  </section>
+
+  <section id="start">
+    <p class="eyebrow">Getting started</p>
+    <h2>Two ways in, depending on whether you want the data or the crawl.</h2>
+    <div class="steps">
+      <div>
+        <h3>I want to train something</h3>
+        <p>Load a snapshot, split it without leaking, cut supervised windows. Runs the same against
+        a 28 MB starter set or the full corpus.</p>
+        <pre><span class="c"># pip install terrastat</span>
+from terrastat import dataset
+
+lf = dataset.load(<span class="c">"starter"</span>)
+train, test = dataset.split(lf, by=<span class="c">"dataset_id"</span>)
+X, y = dataset.windows(train, horizon=<span class="c">18</span>)</pre>
+        <p>The payload is plain Parquet plus a checksummed manifest — readable with polars,
+        pandas, DuckDB or Hugging Face <code>datasets</code>, with nothing of ours installed. The
+        public snapshot is still being prepared; until it lands,
+        <code>terrastat export starter --public-only</code> builds one from your own crawl.</p>
+      </div>
+      <div>
+        <h3>I want to gather it myself</h3>
+        <p>One command, re-run until it says nothing is left. Add a FRED key to <code>.env</code>
+        first; Eurostat and the OECD need none.</p>
+        <pre>pip install -e .
+terrastat run <span class="c"># all sources, resumable</span>
+terrastat run --max-hours 8 <span class="c"># stop cleanly, resume later</span>
+
+terrastat corpus <span class="c"># regenerate this page</span>
+terrastat quality --out reports/quality
+terrastat search <span class="c">"chicken|poultry"</span></pre>
+        <p>The manual walks through opening a terminal, stopping and resuming, and reading what
+        lands on disk.</p>
+      </div>
+    </div>
+  </section>
+
+
+  <section id="schema">
+    <p class="eyebrow">The schema</p>
+    <h2>One row per series, 36 columns.</h2>
+    <p class="prose">The sources publish in formats that have nothing in common. They are mapped
+    onto the same 36 columns, so the whole corpus opens as one table whichever source a
+    series came from. The columns fall into seven groups.</p>
+    <div class="families"><div class="family keys"><h3>identity<span class="count">4</span></h3><p>The key for a series, and the table it came from. The dataset id is what you group on when splitting.</p><div class="cols"><span class="col">series_uid</span><span class="col">source</span><span class="col">source_id</span><span class="col">dataset_id</span></div></div><div class="family text"><h3>human-readable<span class="count">4</span></h3><p>A description per series, built from all the metadata the publisher gave. You can feed it to a text encoder alongside the values, or ignore it.</p><div class="cols"><span class="col">dataset_title</span><span class="col">title</span><span class="col">description</span><span class="col">notes</span></div></div><div class="family structure"><h3>classification<span class="count">8</span></h3><p>Where the series sits in the published table. Each dimension keeps its code and its label, so totals, their parts and nested geographies (<code>DE</code>, <code>DE1</code>, <code>DE11</code>) can be found.</p><div class="cols"><span class="col">frequency</span><span class="col">frequency_raw</span><span class="col">units</span><span class="col">seasonal_adjustment</span><span class="col">geo</span><span class="col">geo_label</span><span class="col">dimensions</span><span class="col">tags</span></div></div><div class="family numbers"><h3>the data<span class="count">3</span></h3><p>Dates, values and status flags, stored as lists on the row. Missing observations stay as nulls rather than disappearing, and flags such as provisional or estimated are kept.</p><div class="cols"><span class="col">dates</span><span class="col">values</span><span class="col">flags</span></div></div><div class="family licence"><h3>licence<span class="count">6</span></h3><p>The licence, its URL, and the credit the publisher asks for. Filtering on these gives a subset you can share.</p><div class="cols"><span class="col">license_id</span><span class="col">license_name</span><span class="col">license_url</span><span class="col">license_detail</span><span class="col">attribution</span><span class="col">license_notes</span></div></div><div class="family numbers"><h3>extent<span class="count">5</span></h3><p>Start, end and counts. They are fixed-width, so a scan that reads only these never touches the values: a pass over the whole corpus takes about twelve seconds.</p><div class="cols"><span class="col">start_date</span><span class="col">end_date</span><span class="col">n_points</span><span class="col">n_obs</span><span class="col">n_flagged</span></div></div><div class="family keys"><h3>provenance<span class="count">6</span></h3><p>Who produced the number, when it was fetched, and which vintage it is. FRED republishes 80,274 OECD series, so the originating agency is worth keeping.</p><div class="cols"><span class="col">origin_agencies</span><span class="col">origin_us_federal</span><span class="col">source_url</span><span class="col">last_updated</span><span class="col">retrieved_at</span><span class="col">vintage</span></div></div></div>
+    
+    <p class="prose specimen-lead">Four rows from the corpus, with different sources, frequencies
+    and subjects. Each is drawn against its own range, so the heights are not comparable.</p>
+    <div class="rows">
+      <figure class="row-card">
+        <figcaption>
+          <span class="chip">oecd</span><span class="chip">A</span>
+          <strong>Inland fisheries</strong>
+        </figcaption>
+        <svg class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" role="img" aria-label="the shape of this series"><polygon points="0,52 0.0,37.2 11.1,33.1 22.2,26.0 33.3,25.0 44.4,16.2 55.6,10.4 66.7,40.3 77.8,34.4 88.9,18.0 100.0,3.2 111.1,3.0 122.2,3.8 133.3,31.9 144.4,49.0 155.6,38.9 166.7,40.5 177.8,34.7 188.9,42.8 200.0,46.9 211.1,42.3 222.2,33.6 233.3,33.6 244.4,27.2 255.6,30.9 266.7,20.2 277.8,32.5 288.9,36.8 300.0,45.2 300,52" fill="currentColor" opacity="0.10"/><polyline points="0.0,37.2 11.1,33.1 22.2,26.0 33.3,25.0 44.4,16.2 55.6,10.4 66.7,40.3 77.8,34.4 88.9,18.0 100.0,3.2 111.1,3.0 122.2,3.8 133.3,31.9 144.4,49.0 155.6,38.9 166.7,40.5 177.8,34.7 188.9,42.8 200.0,46.9 211.1,42.3 222.2,33.6 233.3,33.6 244.4,27.2 255.6,30.9 266.7,20.2 277.8,32.5 288.9,36.8 300.0,45.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <p class="extent mono">28 obs &middot; 1995-01-01 &rarr; 2022-01-01</p>
+        <p class="desc">Inland fisheries. Reference area: Argentina. Measure: Inland fisheries. Species: Freshwater fishes. Unit of measure: Tonnes. Frequency: Annual.</p>
+        <ul class="dims"><li><span class="mono">REF_AREA=ARG</span> Reference area: Argentina</li><li><span class="mono">FREQ=A</span> Frequency of observation: Annual</li><li><span class="mono">MEASURE=INLAND_FISH</span> Measure: Inland fisheries</li><li><span class="mono">SPECIES=1</span> Species: Freshwater fishes</li><li><span class="mono">UNIT_MEASURE=T</span> Unit of measure: Tonnes</li></ul>
+      </figure>
+      <figure class="row-card">
+        <figcaption>
+          <span class="chip">eurostat</span><span class="chip">D</span>
+          <strong>Euro/ECU exchange rates - daily data</strong>
+        </figcaption>
+        <svg class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" role="img" aria-label="the shape of this series"><polygon points="0,52 0.0,3.0 3.4,10.7 6.7,10.1 10.1,16.0 13.5,18.7 16.9,16.2 20.2,22.5 23.6,26.9 27.0,26.1 30.3,27.1 33.7,25.1 37.1,25.4 40.4,27.9 43.8,31.5 47.2,30.5 50.6,32.0 53.9,33.5 57.3,33.2 60.7,33.4 64.0,33.3 67.4,34.2 70.8,36.0 74.2,35.7 77.5,35.9 80.9,35.3 84.3,34.4 87.6,34.1 91.0,33.9 94.4,35.3 97.8,35.0 101.1,34.0 104.5,33.2 107.9,34.0 111.2,36.1 114.6,36.7 118.0,37.5 121.3,38.3 124.7,39.0 128.1,38.4 131.5,35.7 134.8,37.2 138.2,36.8 141.6,37.3 144.9,37.6 148.3,37.3 151.7,38.4 155.1,38.5 158.4,39.6 161.8,39.9 165.2,39.6 168.5,38.5 171.9,38.0 175.3,38.6 178.7,38.3 182.0,38.4 185.4,38.1 188.8,37.7 192.1,36.5 195.5,37.2 198.9,37.1 202.2,38.7 205.6,38.9 209.0,40.8 212.4,42.5 215.7,43.9 219.1,44.2 222.5,44.3 225.8,43.9 229.2,43.7 232.6,43.9 236.0,44.3 239.3,47.0 242.7,46.0 246.1,46.1 249.4,46.5 252.8,44.8 256.2,45.1 259.6,45.4 262.9,46.0 266.3,46.6 269.7,46.4 273.0,45.9 276.4,46.8 279.8,47.3 283.1,47.9 286.5,48.4 289.9,48.5 293.3,48.7 296.6,49.0 300.0,48.9 300,52" fill="currentColor" opacity="0.10"/><polyline points="0.0,3.0 3.4,10.7 6.7,10.1 10.1,16.0 13.5,18.7 16.9,16.2 20.2,22.5 23.6,26.9 27.0,26.1 30.3,27.1 33.7,25.1 37.1,25.4 40.4,27.9 43.8,31.5 47.2,30.5 50.6,32.0 53.9,33.5 57.3,33.2 60.7,33.4 64.0,33.3 67.4,34.2 70.8,36.0 74.2,35.7 77.5,35.9 80.9,35.3 84.3,34.4 87.6,34.1 91.0,33.9 94.4,35.3 97.8,35.0 101.1,34.0 104.5,33.2 107.9,34.0 111.2,36.1 114.6,36.7 118.0,37.5 121.3,38.3 124.7,39.0 128.1,38.4 131.5,35.7 134.8,37.2 138.2,36.8 141.6,37.3 144.9,37.6 148.3,37.3 151.7,38.4 155.1,38.5 158.4,39.6 161.8,39.9 165.2,39.6 168.5,38.5 171.9,38.0 175.3,38.6 178.7,38.3 182.0,38.4 185.4,38.1 188.8,37.7 192.1,36.5 195.5,37.2 198.9,37.1 202.2,38.7 205.6,38.9 209.0,40.8 212.4,42.5 215.7,43.9 219.1,44.2 222.5,44.3 225.8,43.9 229.2,43.7 232.6,43.9 236.0,44.3 239.3,47.0 242.7,46.0 246.1,46.1 249.4,46.5 252.8,44.8 256.2,45.1 259.6,45.4 262.9,46.0 266.3,46.6 269.7,46.4 273.0,45.9 276.4,46.8 279.8,47.3 283.1,47.9 286.5,48.4 289.9,48.5 293.3,48.7 296.6,49.0 300.0,48.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <p class="extent mono">13,290 obs &middot; 1974-07-01 &rarr; 2026-09-03</p>
+        <p class="desc">Euro/ECU exchange rates - daily data. Statistical information: Average. Unit of measure: National currency. Currency: Swiss franc. Frequency: Daily.</p>
+        <ul class="dims"><li><span class="mono">freq=D</span> Time frequency: Daily</li><li><span class="mono">statinfo=AVG</span> Statistical information: Average</li><li><span class="mono">unit=NAC</span> Unit of measure: National currency</li><li><span class="mono">currency=CHF</span> Currency: Swiss franc</li></ul>
+      </figure>
+      <figure class="row-card">
+        <figcaption>
+          <span class="chip">eurostat</span><span class="chip">M</span>
+          <strong>HICP - monthly data (index) (1996-2025)</strong>
+        </figcaption>
+        <svg class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" role="img" aria-label="the shape of this series"><polygon points="0,52 0.0,49.0 3.4,48.8 6.7,48.8 10.1,48.4 13.5,48.2 16.9,48.2 20.2,47.8 23.6,47.7 27.0,47.9 30.3,47.7 33.7,47.5 37.1,47.6 40.4,47.0 43.8,46.7 47.2,46.4 50.6,45.9 53.9,45.3 57.3,45.2 60.7,44.9 64.0,44.4 67.4,44.4 70.8,44.0 74.2,43.9 77.5,43.7 80.9,43.4 84.3,42.8 87.6,42.7 91.0,42.1 94.4,41.7 97.8,41.3 101.1,41.2 104.5,40.6 107.9,40.5 111.2,40.2 114.6,39.5 118.0,39.3 121.3,38.5 124.7,37.3 128.1,37.2 131.5,37.8 134.8,37.3 138.2,37.2 141.6,37.1 144.9,36.2 148.3,36.1 151.7,35.5 155.1,34.0 158.4,33.7 161.8,33.8 165.2,32.6 168.5,32.0 171.9,32.0 175.3,31.0 178.7,30.8 182.0,31.0 185.4,30.0 188.8,29.8 192.1,30.6 195.5,29.3 198.9,29.4 202.2,29.7 205.6,28.9 209.0,28.7 212.4,28.3 215.7,27.4 219.1,27.0 222.5,27.0 225.8,26.0 229.2,25.5 232.6,25.8 236.0,24.8 239.3,24.6 242.7,24.3 246.1,24.3 249.4,23.8 252.8,23.5 256.2,22.2 259.6,21.4 262.9,20.2 266.3,16.4 269.7,13.0 273.0,11.3 276.4,9.3 279.8,8.2 283.1,7.6 286.5,6.4 289.9,6.5 293.3,4.5 296.6,3.7 300.0,3.0 300,52" fill="currentColor" opacity="0.10"/><polyline points="0.0,49.0 3.4,48.8 6.7,48.8 10.1,48.4 13.5,48.2 16.9,48.2 20.2,47.8 23.6,47.7 27.0,47.9 30.3,47.7 33.7,47.5 37.1,47.6 40.4,47.0 43.8,46.7 47.2,46.4 50.6,45.9 53.9,45.3 57.3,45.2 60.7,44.9 64.0,44.4 67.4,44.4 70.8,44.0 74.2,43.9 77.5,43.7 80.9,43.4 84.3,42.8 87.6,42.7 91.0,42.1 94.4,41.7 97.8,41.3 101.1,41.2 104.5,40.6 107.9,40.5 111.2,40.2 114.6,39.5 118.0,39.3 121.3,38.5 124.7,37.3 128.1,37.2 131.5,37.8 134.8,37.3 138.2,37.2 141.6,37.1 144.9,36.2 148.3,36.1 151.7,35.5 155.1,34.0 158.4,33.7 161.8,33.8 165.2,32.6 168.5,32.0 171.9,32.0 175.3,31.0 178.7,30.8 182.0,31.0 185.4,30.0 188.8,29.8 192.1,30.6 195.5,29.3 198.9,29.4 202.2,29.7 205.6,28.9 209.0,28.7 212.4,28.3 215.7,27.4 219.1,27.0 222.5,27.0 225.8,26.0 229.2,25.5 232.6,25.8 236.0,24.8 239.3,24.6 242.7,24.3 246.1,24.3 249.4,23.8 252.8,23.5 256.2,22.2 259.6,21.4 262.9,20.2 266.3,16.4 269.7,13.0 273.0,11.3 276.4,9.3 279.8,8.2 283.1,7.6 286.5,6.4 289.9,6.5 293.3,4.5 296.6,3.7 300.0,3.0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <p class="extent mono">360 obs &middot; 1996-01-01 &rarr; 2025-12-01</p>
+        <p class="desc">HICP - monthly data (index) (1996-2025). Unit of measure: Index, 2005=100. Classification of individual consumption by purpose (COICOP): All-items HICP. Geopolitical entity (reporting): Austria. Frequency: Monthly.</p>
+        <ul class="dims"><li><span class="mono">freq=M</span> Time frequency: Monthly</li><li><span class="mono">unit=I05</span> Unit of measure: Index, 2005=100</li><li><span class="mono">coicop=CP00</span> Classification of individual consumption by purpose (COICOP): All-items HICP</li><li><span class="mono">geo=AT</span> Geopolitical entity (reporting): Austria</li></ul>
+      </figure>
+      <figure class="row-card">
+        <figcaption>
+          <span class="chip">eurostat</span><span class="chip">M</span>
+          <strong>Poultry - monthly data</strong>
+        </figcaption>
+        <svg class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" role="img" aria-label="the shape of this series"><polygon points="0,52 0.0,31.3 3.4,49.0 6.7,20.0 10.1,42.1 13.5,30.2 16.9,37.1 20.2,43.4 23.6,36.4 27.0,36.9 30.3,26.2 33.7,34.9 37.1,26.3 40.4,31.0 43.8,37.3 47.2,12.3 50.6,28.0 53.9,23.0 57.3,24.7 60.7,33.1 64.0,23.7 67.4,24.7 70.8,16.0 74.2,22.7 77.5,9.4 80.9,23.0 84.3,26.0 87.6,4.9 91.0,21.5 94.4,14.6 97.8,20.3 101.1,28.4 104.5,26.2 107.9,15.4 111.2,19.5 114.6,24.0 118.0,8.9 121.3,29.6 124.7,27.1 128.1,14.6 131.5,23.6 134.8,14.6 138.2,15.8 141.6,21.3 144.9,25.0 148.3,16.2 151.7,15.6 155.1,17.4 158.4,5.9 161.8,28.0 165.2,25.9 168.5,11.0 171.9,19.4 175.3,18.4 178.7,15.0 182.0,19.6 185.4,19.2 188.8,13.4 192.1,13.7 195.5,19.1 198.9,3.0 202.2,25.4 205.6,15.9 209.0,14.9 212.4,16.8 215.7,17.7 219.1,8.9 222.5,23.4 225.8,19.7 229.2,15.4 232.6,20.0 236.0,19.7 239.3,11.9 242.7,20.7 246.1,20.0 249.4,8.6 252.8,19.0 256.2,25.0 259.6,9.9 262.9,17.9 266.3,15.7 269.7,10.6 273.0,14.6 276.4,12.8 279.8,10.3 283.1,12.9 286.5,19.7 289.9,10.1 293.3,15.2 296.6,16.9 300.0,21.4 300,52" fill="currentColor" opacity="0.10"/><polyline points="0.0,31.3 3.4,49.0 6.7,20.0 10.1,42.1 13.5,30.2 16.9,37.1 20.2,43.4 23.6,36.4 27.0,36.9 30.3,26.2 33.7,34.9 37.1,26.3 40.4,31.0 43.8,37.3 47.2,12.3 50.6,28.0 53.9,23.0 57.3,24.7 60.7,33.1 64.0,23.7 67.4,24.7 70.8,16.0 74.2,22.7 77.5,9.4 80.9,23.0 84.3,26.0 87.6,4.9 91.0,21.5 94.4,14.6 97.8,20.3 101.1,28.4 104.5,26.2 107.9,15.4 111.2,19.5 114.6,24.0 118.0,8.9 121.3,29.6 124.7,27.1 128.1,14.6 131.5,23.6 134.8,14.6 138.2,15.8 141.6,21.3 144.9,25.0 148.3,16.2 151.7,15.6 155.1,17.4 158.4,5.9 161.8,28.0 165.2,25.9 168.5,11.0 171.9,19.4 175.3,18.4 178.7,15.0 182.0,19.6 185.4,19.2 188.8,13.4 192.1,13.7 195.5,19.1 198.9,3.0 202.2,25.4 205.6,15.9 209.0,14.9 212.4,16.8 215.7,17.7 219.1,8.9 222.5,23.4 225.8,19.7 229.2,15.4 232.6,20.0 236.0,19.7 239.3,11.9 242.7,20.7 246.1,20.0 249.4,8.6 252.8,19.0 256.2,25.0 259.6,9.9 262.9,17.9 266.3,15.7 269.7,10.6 273.0,14.6 276.4,12.8 279.8,10.3 283.1,12.9 286.5,19.7 289.9,10.1 293.3,15.2 296.6,16.9 300.0,21.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <p class="extent mono">715 obs &middot; 1967-01-01 &rarr; 2026-07-01</p>
+        <p class="desc">Poultry - monthly data. Activity of hatcheries: Chicks for use. Live animals: Chicks of laying hen breeds (laying). Unit of measure: Thousand. Geopolitical entity (reporting): France. Frequency: Monthly.</p>
+        <ul class="dims"><li><span class="mono">freq=M</span> Time frequency: Monthly</li><li><span class="mono">hatchitm=CU</span> Activity of hatcheries: Chicks for use</li><li><span class="mono">animals=A5130O</span> Live animals: Chicks of laying hen breeds (laying)</li><li><span class="mono">unit=THS</span> Unit of measure: Thousand</li><li><span class="mono">geo=FR</span> Geopolitical entity (reporting): France</li></ul>
+      </figure></div>
+  </section>
+
+
+  <section id="leakage">
+    <p class="eyebrow">Curation and leakage</p>
+    <h2>This kind of data is prone to leakage.</h2>
+    <p class="prose">Series are kept as published, with their own start, end and gaps. The part
+    worth knowing about is that economic statistics come with pitfalls that are easy to miss, and
+    most of them make a random train/test split look better than it is. Twelve are written up so
+    far, and we keep finding more.</p>
+    <div class="traps">
+      <div><h4>The same series in another form</h4><p>Seasonally adjusted next to raw, an index
+      next to its level, another currency, a per-capita version. Different numbers, same
+      information.</p></div>
+      <div><h4>Accounting identities</h4><p>Geographic and product hierarchies, national accounts
+      identities, mirror trade, stock and flow pairs. A total is a sum of series that can end up
+      on the other side of the split.</p></div>
+      <div><h4>Revisions</h4><p>Only the latest vintage is stored. A 2008 value is the number as
+      it reads now, not as it was published then. A backtest that is not real-time uses data that
+      was not available at the time.</p></div>
+      <div><h4>Publication lag and projections</h4><p>A quarterly figure is released weeks after
+      the period it covers. Some series run to 2100 because they are forecasts. Both look like
+      history.</p></div>
+      <div><h4>Filters and imputation</h4><p>Smoothed, interpolated and estimated values carry
+      information backwards inside a single series. Splitting cannot fix that; the status flags
+      are there to find it.</p></div>
+      <div><h4>Ill-formed series</h4><p>Constants, series that are still updated but have not
+      moved in years, series that are almost entirely one value. They pass any length or recency
+      filter and teach a model nothing. The sampled table below counts them.</p></div>
+      <div><h4>The same series from two sources</h4><p>FRED republishes 80,274 OECD series, and
+      there are near-duplicates within single sources too. <code>origin_agencies</code> is there
+      to find them.</p></div>
+    </div>
+    <p class="prose closing">This is why the split groups by dataset instead of shuffling rows,
+    and why the cleaning routine is opt-in rather than the default.</p>
+  </section>
+
+  <section>
+    <h2>What the values look like<span class="tag s">sampled</span></h2>
+    <p class="prose">A long series that barely moves is common here, and close to useless as a
+    training example. <em>Unique share</em> is distinct values over observations; a low one means
+    a step function, or something rounded until the variation is gone. <em>Has a value &le; 0</em>
+    decides whether sMAPE, a log transform or a multiplicative model is safe.</p>
+    <div class="scroller"><table><caption>Estimated from 267.7 k series drawn across datasets — this is the only part that has to read the value lists, and 30 GB of them is too many to read for a summary. Series with a single observation are excluded from every column but the first: with one point a series is at once 100% unique and 100% constant.</caption><thead><tr><th>frequency</th><th>sampled</th><th>one point only</th><th>distinct values</th><th>unique share</th><th>constant</th><th>near-constant</th><th>has a value &le; 0</th></tr></thead><tbody>  <tr class="sampled"><td>annual<span class="chip">A</span></td><td class="num">88.4 k</td><td class="num">36%</td><td class="num">9</td><td class="num">1.00</td><td class="num">11.8%</td><td class="num">2.4%</td><td class="num">18.1%</td></tr>
+  <tr class="sampled"><td>monthly<span class="chip">M</span></td><td class="num">62.6 k</td><td class="num">3%</td><td class="num">7</td><td class="num">0.62</td><td class="num">7.8%</td><td class="num">8.8%</td><td class="num">32.4%</td></tr>
+  <tr class="sampled"><td>quarterly<span class="chip">Q</span></td><td class="num">84.1 k</td><td class="num">9%</td><td class="num">45</td><td class="num">0.93</td><td class="num">7.5%</td><td class="num">2.9%</td><td class="num">25.8%</td></tr>
+  <tr class="sampled"><td>weekly<span class="chip">W</span></td><td class="num">8.3 k</td><td class="num">0%</td><td class="num">113</td><td class="num">0.14</td><td class="num">4.7%</td><td class="num">30.1%</td><td class="num">32.3%</td></tr>
+  <tr class="sampled"><td>daily<span class="chip">D</span></td><td class="num">2.4 k</td><td class="num">2%</td><td class="num">1,073</td><td class="num">0.67</td><td class="num">0.1%</td><td class="num">10.0%</td><td class="num">44.4%</td></tr>
+  <tr class="sampled"><td>semiannual<span class="chip">S</span></td><td class="num">4.8 k</td><td class="num">1%</td><td class="num">26</td><td class="num">0.98</td><td class="num">1.3%</td><td class="num">0.2%</td><td class="num">2.0%</td></tr>
+  <tr class="sampled"><td>3-yearly<span class="chip">A3</span></td><td class="num">6.4 k</td><td class="num">37%</td><td class="num">2</td><td class="num">1.00</td><td class="num">6.3%</td><td class="num">0.0%</td><td class="num">2.4%</td></tr>
+  <tr class="sampled"><td>5-yearly<span class="chip">P</span></td><td class="num">564</td><td class="num">0%</td><td class="num">11</td><td class="num">1.00</td><td class="num">0.0%</td><td class="num">0.0%</td><td class="num">31.2%</td></tr>
+  <tr class="sampled"><td>biweekly<span class="chip">BW</span></td><td class="num">16</td><td class="num">0%</td><td class="num">592</td><td class="num">0.99</td><td class="num">0.0%</td><td class="num">12.5%</td><td class="num">6.2%</td></tr>
+  <tr class="sampled"><td>irregular<span class="chip">I</span></td><td class="num">2.4 k</td><td class="num">83%</td><td class="num">4</td><td class="num">1.00</td><td class="num">6.8%</td><td class="num">0.0%</td><td class="num">1.0%</td></tr>
+  <tr class="sampled"><td>unknown<span class="chip">OTHER</span></td><td class="num">7.7 k</td><td class="num">80%</td><td class="num">4</td><td class="num">1.00</td><td class="num">4.1%</td><td class="num">0.5%</td><td class="num">31.4%</td></tr></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>How concentrated it is<span class="tag e">exact</span></h2>
+    <p class="prose">A series count makes a corpus look broader than it is when most of it comes
+    from a few very large tables. The more concentrated a frequency, the more a random split puts
+    near-copies of the same table on both sides.</p>
+    <div class="scroller"><table><caption>Exact. <em>Effective</em> is the perplexity of the series-per-dataset distribution: the number of equally sized datasets that would be as diverse as what is actually here. Bars show the raw dataset count, log-scaled.</caption><thead><tr><th>frequency</th><th></th><th>datasets</th><th>effective</th><th>largest dataset</th><th>its share</th><th>top 10</th></tr></thead><tbody>  <tr class="exact"><td>annual<span class="chip">A</span></td><td class="barcell"><span class="bar dim" style="width:100.0%"></span></td><td class="num">7.6 k</td><td class="num lead"><strong>437</strong></td><td><code>eurostat:migr_asyrescra</code></td><td class="num">4%</td><td class="num">22%</td></tr>
+  <tr class="exact"><td>monthly<span class="chip">M</span></td><td class="barcell"><span class="bar dim" style="width:68.4%"></span></td><td class="num">452</td><td class="num lead"><strong>47</strong></td><td><code>eurostat:avia_tf_aca</code></td><td class="num">11%</td><td class="num">52%</td></tr>
+  <tr class="exact"><td>quarterly<span class="chip">Q</span></td><td class="barcell"><span class="bar dim" style="width:72.0%"></span></td><td class="num">623</td><td class="num lead"><strong>85</strong></td><td><code>eurostat:migr_eirtn1</code></td><td class="num">16%</td><td class="num">43%</td></tr>
+  <tr class="exact"><td>weekly<span class="chip">W</span></td><td class="barcell"><span class="bar dim" style="width:44.4%"></span></td><td class="num">53</td><td class="num lead"><strong>6</strong></td><td><code>eurostat:demo_r_mweek3</code></td><td class="num">37%</td><td class="num">97%</td></tr>
+  <tr class="exact"><td>daily<span class="chip">D</span></td><td class="barcell"><span class="bar dim" style="width:44.4%"></span></td><td class="num">53</td><td class="num lead"><strong>3</strong></td><td><code>fred:328</code></td><td class="num">69%</td><td class="num">97%</td></tr>
+  <tr class="exact"><td>semiannual<span class="chip">S</span></td><td class="barcell"><span class="bar dim" style="width:34.6%"></span></td><td class="num">22</td><td class="num lead"><strong>11</strong></td><td><code>eurostat:nrg_pc_203</code></td><td class="num">19%</td><td class="num">96%</td></tr>
+  <tr class="exact"><td>3-yearly<span class="chip">A3</span></td><td class="barcell"><span class="bar dim" style="width:31.0%"></span></td><td class="num">16</td><td class="num lead"><strong>9</strong></td><td><code>oecd:OECD.EDU.IMEP__DSD_EAG_LSO_EA_DF_LSO_NEAC_ALL__1.0</code></td><td class="num">41%</td><td class="num">87%</td></tr>
+  <tr class="exact"><td>5-yearly<span class="chip">P</span></td><td class="barcell"><span class="bar dim" style="width:12.3%"></span></td><td class="num">3</td><td class="num lead"><strong>2</strong></td><td><code>fred:234</code></td><td class="num">81%</td><td class="num">100%</td></tr>
+  <tr class="exact"><td>biweekly<span class="chip">BW</span></td><td class="barcell"><span class="bar dim" style="width:15.5%"></span></td><td class="num">4</td><td class="num lead"><strong>2</strong></td><td><code>fred:79</code></td><td class="num">75%</td><td class="num">100%</td></tr>
+  <tr class="exact"><td>irregular<span class="chip">I</span></td><td class="barcell"><span class="bar dim" style="width:20.1%"></span></td><td class="num">6</td><td class="num lead"><strong>4</strong></td><td><code>oecd:OECD.DEV.LAC__DSD_KIIBIH_SPI_DF_SPI__1.0</code></td><td class="num">31%</td><td class="num">100%</td></tr>
+  <tr class="exact"><td>unknown<span class="chip">OTHER</span></td><td class="barcell"><span class="bar dim" style="width:36.9%"></span></td><td class="num">27</td><td class="num lead"><strong>13</strong></td><td><code>oecd:OECD.EDU.ECS__DSD_TALIS_PQ_DF_TALIS_PQ__1.0</code></td><td class="num">18%</td><td class="num">84%</td></tr></tbody></table></div>
+  </section>
+
+  <section id="what">
+    <p class="eyebrow">What is in it</p>
+    <h2>What is in it.</h2>
+    <div class="facts">
+      <div>
+        <h3>Broad, and deliberately uncurated</h3>
+        <p>Daily to five-yearly, national accounts to fisheries by species, with histories reaching
+        back to the seventeenth century and forward to published projections. Series keep their own start, end and
+        gaps: what counts as clean depends on the question, so nothing is trimmed on your behalf.</p>
+      </div>
+      <div>
+        <h3>Licences are sorted out</h3>
+        <p>Terms differ by agency and, for FRED, by series. Every row carries its own
+        <code>license_id</code>, <code>license_url</code>, <code>attribution</code> and
+        originating agency, so selecting a subset you can redistribute is a filter, and the export
+        writes out the citations each source asks for.</p>
+      </div>
+      <div>
+        <h3>One row per series</h3>
+        <p>The same 36 columns whatever the source, so the whole thing opens as one dataset in
+        polars, pandas or DuckDB. Dates, values and status flags sit as lists on the row, next to
+        the metadata.</p>
+      </div>
+      <div>
+        <h3>Made for leakage-aware splits</h3>
+        <p>The sources republish one another, totals sit next to their parts, and the same
+        indicator turns up at several frequencies. Twelve of these are documented, and the
+        splitting that ships groups by dataset instead of shuffling rows.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="licence">
+    <p class="eyebrow">Before you redistribute anything</p>
+    <h2>The code is Apache-2.0. The data is not.</h2>
+    <div class="licence">
+      <h3>Licences travel with the rows, and they differ</h3>
+      <p>Eurostat and the OECD permit re-use, including commercial re-use, <strong>with
+      attribution</strong>. FRED reports a copyright status per series, and its own terms restrict
+      archiving and machine-learning use of material that passes through it — while the underlying
+      US federal data is public domain at its origin.</p>
+      <p>The subset to publish is therefore a filter, not a whole corpus:
+      <code>terrastat export NAME --public-only</code> keeps Eurostat, the OECD, and the FRED rows
+      that are both public domain and federal in origin, and writes an
+      <code>ATTRIBUTIONS.md</code> beside the data. Check <code>license_id</code> and
+      <code>attribution</code> on the rows you actually use.</p>
+      <p>Not affiliated with, endorsed by, or connected to Eurostat, the OECD, the Federal Reserve
+      Bank of St. Louis, or any statistical agency. The name describes what the tool gathers, not
+      where it comes from.</p>
+    </div>
+  </section>
+
+</div>
+</main>
+
+<footer><div class="wrap">
+  <p>Every figure on this page is computed by <code>terrastat corpus</code>, never written by hand.
+  Generated 2026-09-11 from eurostat, fred, oecd; retrievals
+  eurostat 2026-09-07 · fred 2026-09-04 · oecd 2026-09-09.</p>
+  <p>Iker Rosales Saiz and Pablo Montero-Manso · code Apache-2.0 ·
+  <a href="https://github.com/pmontman/terrastat">github.com/pmontman/terrastat</a></p>
+</div></footer>
+</body>
+</html>

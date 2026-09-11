@@ -1,18 +1,18 @@
 # The shape of the data
 
 How `terrastat` is laid out, what each layer is for, and what a series looks like once it gets
-there. Figures are from the corpus as it stands: **956,142,019 series, 6,275,277,391 observations**
+there. Figures are from the corpus as it stands: **1,049,773,453 series, 7,575,538,825 observations**
 across FRED, Eurostat and OECD.
 
 ## Four layers, each usable while the next is still being built
 
 ```mermaid
 flowchart LR
-    F["FRED - 845k series"] --> R
-    E["Eurostat - 879M series"] --> R
-    O["OECD - 76M series"] --> R
-    R["1. raw/<br>as served<br>34 GB"] --> D["2. datasets/<br>per observation<br>17 GB"]
-    D --> S["3. series/<br>per series, 36 cols<br>31 GB"]
+    F["FRED - 846k series"] --> R
+    E["Eurostat - 962M series"] --> R
+    O["OECD - 87M series"] --> R
+    R["1. raw/<br>as served<br>30 GB"] --> D["2. datasets/<br>per observation<br>17 GB"]
+    D --> S["3. series/<br>per series, 36 cols<br>30 GB"]
     S --> X["4. snapshot/<br>training shards"]
 ```
 
@@ -28,7 +28,7 @@ columns whatever the source**. That is what lets the whole tree be opened as one
 
 ```python
 import polars as pl
-pl.scan_parquet("data/series/**/*.parquet")     # 956M rows, one schema
+pl.scan_parquet("data/series/**/*.parquet")     # 1.05B rows, one schema
 ```
 
 ## The series schema
@@ -103,8 +103,8 @@ source asks for.
 | `flags` | list of str | provisional, estimated, break in series, … |
 
 Keeping the fixed-width columns separate from the three list columns is what makes the analysis
-tools cheap: the lists are essentially all of the 31 GB, and Parquet stores columns separately, so
-a scan that names only scalars never reads them. A full pass over all 956M series takes about
+tools cheap: the lists are essentially all of the 30 GB, and Parquet stores columns separately, so
+a scan that names only scalars never reads them. A full pass over all 1.05B series takes about
 twelve seconds.
 
 ## The commands
@@ -167,7 +167,7 @@ in full.
 ```python
 import polars as pl
 
-# the whole tree as one table, without touching the 31 GB of values
+# the whole tree as one table, without touching the 30 GB of values
 lf = pl.scan_parquet("data/series/**/*.parquet", hive_partitioning=True)
 lf.select("source", "frequency", "n_obs").group_by("source").len().collect(engine="streaming")
 

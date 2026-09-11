@@ -16,7 +16,7 @@ import traceback
 import polars as pl
 from tqdm import tqdm
 
-from terrastat.http import StopRequested, TooLarge
+from terrastat.http import StopRequested, Throttled, TooLarge
 from terrastat.sources import SOURCES, get_source
 from terrastat.sources.base import DatasetRef, NoData, NotTimeSeries, ref_from_row
 from terrastat.storage import State, catalog_path, dataset_dir, read_json, write_parquet
@@ -92,6 +92,7 @@ def run_fetch(
         deadline = min(deadline or float("inf"), t_start + max_hours * 3600)
     done = state.ids_with("done")
     failed = state.ids_with("failed")
+    throttled = state.ids_with("throttled")
     too_large = state.ids_with("too_large")
     not_ts = state.ids_with("not_timeseries")
     no_data = state.ids_with("no_data")
@@ -114,8 +115,9 @@ def run_fetch(
     if limit:
         todo = todo[:limit]
     log.info(
-        "%s: %d datasets selected, %d done, %d raw only, %d failed, %d to do%s",
-        source_name, len(refs), len(done), len(raw_done), len(failed), len(todo), " (raw only)" if raw_only else "",
+        "%s: %d datasets selected, %d done, %d raw only, %d failed, %d throttled, %d to do%s",
+        source_name, len(refs), len(done), len(raw_done), len(failed), len(throttled), len(todo),
+        " (raw only)" if raw_only else "",
     )
     summary = {"done": 0, "raw": 0, "failed": 0, "skipped": len(refs) - len(todo), "series": 0, "observations": 0, "stopped_early": False}
     if not todo:
@@ -171,6 +173,15 @@ def run_fetch(
                 log.warning("%s: %s -- needs splitting by dimension; skipped", ref.dataset_id, exc)
                 state.mark(ref.dataset_id, "too_large", error=str(exc)[:300], seconds=round(time.monotonic() - t0, 1))
                 summary["too_large"] = summary.get("too_large", 0) + 1
+            except Throttled as exc:
+                # Not a failure: the dataset is fine, the source is busy. Recording it as failed
+                # would need --retry-failed to ever look at it again, and would bury real
+                # failures among datasets that only needed a quieter moment. The client has
+                # already put this source on a cooldown, so the next few requests will wait.
+                log.warning("%s: %s -- will retry on a later run", ref.dataset_id, exc)
+                state.mark(ref.dataset_id, "throttled", error=str(exc)[:300],
+                           seconds=round(time.monotonic() - t0, 1))
+                summary["throttled"] = summary.get("throttled", 0) + 1
             except KeyboardInterrupt:
                 log.warning("interrupted; %s left incomplete and will be redone next run", ref.dataset_id)
                 raise

@@ -11,6 +11,8 @@ Parquet and JSON on disk; there is no database server and no custom binary forma
 
 | document | what it is for |
 |---|---|
+| [docs/index.html](docs/index.html) | **generated** — the project page: the facts, the tables, and how to start |
+| [docs/corpus.md](docs/corpus.md) | **generated** — the same figures as a markdown annex, for reading in the repo |
 | [MANUAL.md](MANUAL.md) | the walkthrough: running it, stopping it, reading the output |
 | [docs/schema.md](docs/schema.md) | the four layers and all 36 series columns, with diagrams |
 | [docs/leakage.md](docs/leakage.md) | twelve ways this corpus will contaminate a train/test split |
@@ -164,10 +166,18 @@ Run `terrastat <command> --help` for every option.
 
 ### Understanding and choosing, once the data is on disk
 
-The crawl is only half of it. Four commands read the series layer and answer the questions that
+**Start with the project page, [docs/index.html](docs/index.html)** (or its markdown twin,
+[docs/corpus.md](docs/corpus.md)) — how much data there is, how long it is, how much is still
+being published and how concentrated it is. Both are generated from the same tables by
+`terrastat corpus`, never written by hand, so neither can drift from the corpus or from the other.
+Open the HTML file in a browser, or serve `docs/` with GitHub Pages.
+
+The crawl is only half of it. Five commands read the series layer and answer the questions that
 decide what is worth modelling:
 
 ```bash
+terrastat corpus                          # regenerate docs/index.html and docs/corpus.md
+terrastat corpus --check                  # no corpus needed: are the committed pages still generated?
 terrastat quality --out reports/quality   # length, recency, gaps, degeneracy, per source x frequency
 terrastat hierarchy --dataset demo_maeduc --dim sex --check   # is this series the sum of others?
 terrastat search "chicken|poultry"        # find datasets by subject, including by code label
@@ -176,13 +186,15 @@ terrastat select --sources fred --min-rank 0.7   # rank series on recency, lengt
 
 | command | answers |
 |---|---|
+| `corpus` | the one-page answer: how much, how long, how live, how concentrated — regenerated, not written |
 | `quality` | how much data is there really, how much is current, how much is missing or constant |
 | `hierarchy` | which series are exact sums of other series, and whether the units permit summing |
 | `search` | which datasets are about a subject — searches every dimension code label, not just titles |
 | `select` | which individual series are worth training on, ranked within their own frequency |
 
-`quality` and `search` are cheap: they read only fixed-width columns or the dataset metadata, so
-they answer over the whole corpus in seconds. `select` needs the values themselves and writes a
+`corpus`, `quality` and `search` are cheap: they read only fixed-width columns or the dataset
+metadata, so they answer over the whole corpus in seconds — `corpus` samples for the one thing
+that needs the values themselves, and says on the page which numbers those are. `select` needs the values themselves and writes a
 resumable score file. See [docs/schema.md](docs/schema.md) for the layout these all read, and
 **[docs/leakage.md](docs/leakage.md) before splitting anything into train and test** — three
 sources that republish each other, publish totals alongside their parts, and store latest
@@ -207,6 +219,18 @@ On the monthly FRED series here it picks the same December 2021 cutoff the thesi
 two filters remove the same number of series to within a handful. The module docstring documents
 the three places where the thesis text and its reference implementation disagree, and how to ask
 for either.
+
+### Keeping the generated pages honest
+
+`terrastat corpus` writes three files: the page, the annex, and `docs/corpus_tables.json` — the
+computed figures themselves, small enough to commit. That third file is what lets a checkout with
+no data re-render the pages and confirm they match, which is what `terrastat corpus --check` does
+and what CI runs on every push.
+
+It cannot tell you whether the figures are current with the latest crawl — only the machine holding
+the Parquet can answer that, and the pages date-stamp themselves so a stale one says so. What it
+catches is the failure that actually happens: someone edits a generated page by hand, or changes a
+renderer and commits the code without regenerating what it produces.
 
 ### Politeness and timing
 
@@ -237,6 +261,14 @@ Two modes exist for Eurostat-sized crawls:
 - `fetch` (default) tidies right away. Codelists are shared across datasets and cached by
   version, so after the first few hundred datasets almost none are requested any more; the
   structure overhead is then two 1-second requests per dataset.
+
+**When a source pushes back, the whole crawl slows down, not just the request.** A 429 doubles the
+gap between requests for that source and it stays doubled until twenty clean responses earn it
+back. `Retry-After` is honoured in both its forms, seconds and HTTP date. A 5xx arriving during a
+burst of 429s is treated as more pushback rather than as an unrelated glitch, since that is what it
+usually is. If a dataset still cannot be fetched after its retries, the source is put on a five
+minute cooldown and the dataset is recorded as `throttled` rather than `failed` — nothing is wrong
+with it, so the next run picks it up without `--retry-failed`.
 
 ### Resumability
 
@@ -373,8 +405,8 @@ Eurostat and OECD publish only the current version. A `vintage` column is presen
 
 | source   | catalogue                       | rough size |
 |----------|---------------------------------|------------|
-| FRED     | 331 releases, ~845k series      | tens of millions of observations; a few GB raw, ~1-2 GB Parquet |
-| Eurostat | 6,653 datasets (+917 tables)    | ~6.2 billion stored values; monthly: 226 datasets, ~1.0e9 values; quarterly: 420, ~1.1e9; annual: 6,154, ~4.4e9; weekly 14, daily 5, semiannual 19 |
+| FRED     | 331 releases, 845,518 series    | 146 million observations; a few GB raw, ~1-2 GB Parquet |
+| Eurostat | 6,650 datasets (+917 tables)    | 961.8 million series, ~6.2 billion observations; monthly: 226 datasets, ~1.0e9 values; quarterly: 420, ~1.1e9; annual: 6,154, ~4.4e9; weekly 14, daily 5, semiannual 19 |
 | OECD     | 1,543 dataflows                 | varies widely; very large dataflows may be refused in one request (recorded as failed) |
 
 Use `--freq`, `--max-values` (size hint from the catalogue) and `--max-hours` to shape a run.

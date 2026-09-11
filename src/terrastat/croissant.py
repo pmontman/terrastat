@@ -213,9 +213,9 @@ def build(manifest: dict, *, url: str | None = None, cite_as: str | None = None,
         "license": license_value,
         "url": url or "https://github.com/USER/terrastat",
         "citeAs": cite_as or (
-            "Montero-Manso, P. terrastat: polite, resumable gathering of public economic time "
-            "series. See CITATION.cff. Each series additionally carries the citation its own "
-            "source requires, in the attribution column."
+            "Rosales Saiz, I. and Montero-Manso, P. terrastat: public economic time series from "
+            "FRED, Eurostat and the OECD. See CITATION.cff. Each series additionally carries the "
+            "citation its own source requires, in the attribution column."
         ),
         "keywords": ["time series", "forecasting", "economics", "FRED", "Eurostat", "OECD"],
         "isLiveDataset": False,

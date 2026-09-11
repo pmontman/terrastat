@@ -101,6 +101,22 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--history-years", type=float, default=1.0, help="history required before the earliest origin (default 1)")
     q.add_argument("--out", default=None, help="directory to write the tables (parquet + csv) and summary.md into")
 
+    co = sub.add_parser("corpus", help="regenerate docs/corpus.md: the one-page summary of how much data there is and what shape it is in")
+    co.add_argument("--out", default="docs/corpus.md", help="where to write the markdown annex")
+    co.add_argument("--html", default="docs/index.html", help="where to write the project page")
+    co.add_argument("--no-html", action="store_true", help="write only the markdown")
+    co.add_argument("--sources", nargs="*", choices=SOURCES, default=None)
+    co.add_argument("--freq", nargs="*", default=None, help="canonical frequencies, e.g. M Q A")
+    co.add_argument("--years", type=float, default=2.0, help="the length bar, in years of each series' own frequency")
+    co.add_argument("--sample", type=int, default=100_000, help="series per frequency for the sampled value statistics")
+    co.add_argument("--no-values", action="store_true", help="skip the sampled value pass (distinctness, sign)")
+    co.add_argument("--no-concentration", action="store_true", help="skip the per-dataset pass")
+    co.add_argument("--tables", default="docs/corpus_tables.json", help="where to keep the computed figures")
+    co.add_argument("--check", action="store_true",
+                    help="do not read the corpus: re-render from --tables and fail if the committed pages differ")
+    co.add_argument("--render", action="store_true",
+                    help="do not read the corpus: rewrite both pages from --tables (seconds, not minutes)")
+
     hi = sub.add_parser("hierarchy", help="where the corpus is hierarchical: series that are exact sums of other series")
     hi.add_argument("--sources", nargs="*", choices=SOURCES, default=None)
     hi.add_argument("--dataset", default=None, help="inspect one dataset instead of summarising all")
@@ -261,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
                 argv2 += [flag, str(val)]
         if args.check:
             argv2 += ["--check"]
+        if args.render:
+            argv2 += ["--render"]
         return hier_main(argv2)
 
     if args.cmd == "search":
@@ -318,6 +336,28 @@ def main(argv: list[str] | None = None) -> int:
         argv2 += ["--folds", str(args.folds), "--history-years", str(args.history_years)]
         argv2 += ["--sample", str(args.sample), "--seed", str(args.seed)]
         return quality_main(argv2)
+
+    if args.cmd == "corpus":
+        from terrastat.corpus import main as corpus_main
+
+        argv2 = ["--out", args.out, "--html", args.html,
+                 "--years", str(args.years), "--sample", str(args.sample)]
+        if args.no_html:
+            argv2 += ["--no-html"]
+        if args.sources:
+            argv2 += ["--sources", *args.sources]
+        if args.freq:
+            argv2 += ["--frequencies", *args.freq]
+        if args.no_values:
+            argv2 += ["--no-values"]
+        if args.no_concentration:
+            argv2 += ["--no-concentration"]
+        argv2 += ["--tables", args.tables]
+        if args.check:
+            argv2 += ["--check"]
+        if args.render:
+            argv2 += ["--render"]
+        return corpus_main(argv2)
 
     if args.cmd == "export":
         from terrastat.export import export_shards
