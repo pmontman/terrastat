@@ -446,13 +446,16 @@ change at the next build.
 
 ## Which file
 
+**The logo is `wordmark.svg`.** `hero.svg` is an illustration, not a logo: its job is to explain
+the dataset where there is room to read it, not to identify the project in a corner.
+
 | you are putting it | use |
 |---|---|
 | a slide, a paper, a README header | `wordmark.svg` — the primary logo |
 | a square or narrow space | `wordmark-stacked.svg` |
 | somewhere the name is already written | `mark.svg` |
 | a browser tab, an avatar, anything under 64 px | `../favicon.svg` |
-| the top of a page, as a hero | `logo.svg` — the full globe with forecast fans |
+| the top of a page, to explain the project | `hero.svg` — the full globe with forecast fans |
 
 Add `-dark` for a dark background and `-mono` for one colour. They combine:
 `wordmark-stacked-mono-dark.svg`.
