@@ -222,7 +222,7 @@ for either.
 
 ### Keeping the generated pages honest
 
-`terrastat corpus` writes four files: the page, the annex, `docs/favicon.svg` (the globe mark, whose parallels are real series from the corpus), and `docs/corpus_tables.json` — the
+`terrastat corpus` writes the page, the annex, `docs/corpus_tables.json`, `docs/favicon.svg`, and the logo kit in [`docs/brand/`](docs/brand/) (twelve variants plus the full still and a README saying which to use where) — the
 computed figures themselves, small enough to commit. That third file is what lets a checkout with
 no data re-render the pages and confirm they match, which is what `terrastat corpus --check` does
 and what CI runs on every push.

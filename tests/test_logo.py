@@ -168,7 +168,7 @@ def test_a_landmass_behind_the_globe_is_not_drawn_across_it():
 def test_a_large_still_is_written_beside_the_page(corpus_root, tmp_path):  # noqa: F811
     t = corpus.compute(values=False, concentration=False)
     out = site.write(t, tmp_path / "docs" / "index.html")
-    big = (out.parent / "logo.svg").read_text(encoding="utf-8")
+    big = (out.parent / "brand" / "logo.svg").read_text(encoding="utf-8")
     assert big.startswith("<svg") and "currentColor" not in big and 'width="880"' in big
 
 
@@ -211,7 +211,7 @@ def test_the_standalone_still_has_no_css_variables():
     assert "var(--" not in big and "currentColor" not in big
 
 
-def test_the_header_carries_the_mark_and_the_page_writes_both_forms(corpus_root, tmp_path):  # noqa: F811
+def test_the_header_carries_the_mark_and_the_page_writes_the_kit(corpus_root, tmp_path):  # noqa: F811
     t = corpus.compute(values=False, concentration=False)
     html = site.render(t, standalone=True)
     header = html[html.index("<header"): html.index("</header>")]
@@ -220,10 +220,12 @@ def test_the_header_carries_the_mark_and_the_page_writes_both_forms(corpus_root,
     # the halo must follow the theme, or the gaps between arcs stay white on a dark ground
     assert "var(--paper)" in header
     out = site.write(t, tmp_path / "docs" / "index.html")
-    for name in ("favicon.svg", "logo.svg", "mark.svg", "wordmark.svg"):
-        f = out.parent / name
-        assert f.read_text(encoding="utf-8").startswith("<svg"), name
-        assert "var(--" not in f.read_text(encoding="utf-8"), name
+    assert (out.parent / "favicon.svg").read_text(encoding="utf-8").startswith("<svg")
+    brand = out.parent / "brand"
+    assert (brand / "README.md").read_text(encoding="utf-8").startswith("# The terrastat mark")
+    for name in ("logo.svg", *logo.brand_kit()):
+        text = (brand / name).read_text(encoding="utf-8")
+        assert text.startswith("<svg") and "var(--" not in text, name
 
 
 def test_the_compact_mark_spreads_its_arcs_across_the_disc():
@@ -284,28 +286,3 @@ def test_markers_are_wider_than_the_line_they_sit_on():
     it, showing only where the taper narrows. A marker has to be proud of the line."""
     for width in (7.0, 3.4):
         assert 2 * width * logo.MARKER_R > width * 1.15
-
-
-def test_the_compact_mark_reads_as_series_through_shape_not_markers():
-    """Its ribbon is a tenth of the mark; a dot proud of a line that thick is a blob. The series
-    character has to come from coarse sampling, light smoothing and a bolder swing."""
-    assert logo.mark_svg(256, rim=False).count("<circle") == 0
-    assert logo.SMALL_STEP > logo.STEP and logo.SMALL_AMP > logo.AMPLITUDE_DEG
-    assert logo.SMALL_SMOOTH < 3
-    r = 256 * 0.40
-    ring, lat = logo.synthetic_rings(1)[0], logo.SMALL_LATS[0]
-    pts = logo.sphere_arc(ring, r, 128, 128, step=logo.SMALL_STEP, amp_deg=logo.SMALL_AMP,
-                          lat=lat, window=logo.SMALL_SMOOTH)
-    steps = [abs(b[0] - a[0]) for a, b in zip(pts, pts[1:])]
-    assert max(steps) > 256 * 0.05                  # segments long enough to see a corner
-    ys = [y for _, y in pts]
-    assert max(ys) - min(ys) > r * 0.30             # and a swing you can read
-
-
-def test_the_compact_ribbon_leaves_room_for_its_own_wiggle():
-    assert logo.SMALL_STROKE < 0.13
-    r = 64 * 0.40
-    ring, lat = logo.synthetic_rings(1)[0], logo.SMALL_LATS[1]
-    ys = [y for _, y in logo.sphere_arc(ring, r, 32, 32, step=logo.SMALL_STEP,
-                                        amp_deg=logo.SMALL_AMP, lat=lat, window=logo.SMALL_SMOOTH)]
-    assert max(ys) - min(ys) > 64 * logo.SMALL_STROKE   # the swing exceeds the line width

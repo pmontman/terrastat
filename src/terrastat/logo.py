@@ -82,11 +82,13 @@ SMALL_ARCS = 3             # arcs on the compact mark: five plus fans is mud bel
 # sat in a band across the middle and the rim read as a ring detached from them; spread wide,
 # they nearly touch it and the disc reads as one object.
 SMALL_LATS = (40, 1, -38)
-SMALL_AMP = 13.5           # bolder than the page: three arcs have room the five do not
-SMALL_SMOOTH = 2           # enough to take the jitter off, not enough to erase the shape
-SMALL_STEP = 11            # long segments, so every observation is a corner you can see
-SMALL_STROKE = 0.115       # share of the mark's size. Thinner than before: a 14%-wide ribbon
-                           # swallows its own wiggle, and the swings are the point
+SMALL_AMP = 10.0
+SMALL_SMOOTH = 5           # a wiggle tuned for 440 px is noise at 64: average it down
+SMALL_STEP = 8
+SMALL_STROKE = 0.135       # share of the mark's size
+# Coarser sampling and a bolder swing were tried here, to make the compact arcs read more like
+# plotted series. They do, and the mark is worse for it: at a tenth of the mark's width the
+# ribbon needs a calm line to stay a silhouette. The page globe carries that job instead.
 
 
 def _lcg(seed: int):
@@ -340,8 +342,16 @@ def sphere_arc(ring: dict, r: float, cx: float, cy: float, step: int = 6,
              for i, lon in enumerate(range(-90, 91, step)))]
 
 
+# The two grounds a mark has to survive. `ink` draws the rim and the name, `paper` the halos
+# between arcs -- which is why a light-ground file is unusable on a dark slide: its halos are
+# opaque white, and they show as slivers through the gaps.
+LIGHT = {"ink": "#151a21", "paper": "#ffffff"}
+DARK = {"ink": "#f2f4f8", "paper": "#0d1016"}
+
+
 def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
-             paper: str = "#ffffff", rim: bool = True, standalone: bool = True) -> str:
+             paper: str = "#ffffff", rim: bool = True, standalone: bool = True,
+             mono: bool = False) -> str:
     """The compact mark: three arcs, no continents, no fans, in a square.
 
     Not a shrunk copy of the page globe. Five arcs and five fans are legible at 440 px and mud
@@ -366,7 +376,7 @@ def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
         parts.append(f'<path d="{_path(ribbon(pts, stroke, stroke * 0.2, taper=0.45), True)}" '
                      f'fill="{paper}"/>')
         parts.append(f'<path d="{_path(ribbon(pts, stroke, taper=0.45), True)}" '
-                     f'fill="{ring["colour"]}"/>')
+                     f'fill="{ink if mono else ring["colour"]}"/>')
     parts.append("</svg>")
     return "".join(parts)
 
@@ -377,26 +387,101 @@ def favicon_svg(size: int = 64) -> str:
 
 
 def wordmark_svg(size: int = 72, text: str = "terrastat", ink: str = "#151a21",
-                 paper: str = "#ffffff", gap: float = 0.24, standalone: bool = True) -> str:
-    """The lockup: the compact mark, then the name, set on the globe's equator.
+                 paper: str = "#ffffff", gap: float = 0.24, standalone: bool = True,
+                 mono: bool = False, stacked: bool = False) -> str:
+    """The lockup: the compact mark and the name, side by side or one above the other.
 
-    A logo rarely travels alone, and this is the form that goes on a slide. The name is set in
-    Newsreader, the page's display face, with a serif fallback for anywhere the webfont is not
-    loaded — a standalone SVG cannot carry the font with it.
+    A logo rarely travels alone, and this is the form that goes on a slide or a paper. The name
+    is set in Newsreader, the page's display face, with a serif fallback for anywhere the webfont
+    is not loaded — a standalone SVG cannot carry a font with it.
     """
     fs = size * 0.60
-    x = size * (1 + gap)
-    width = x + len(text) * fs * 0.52
-    mark = mark_svg(size, ink=ink, paper=paper, standalone=False).replace(' class="mark"', "")
+    text_w = len(text) * fs * 0.52
+    mark = mark_svg(size, ink=ink, paper=paper, standalone=False, mono=mono)
     inner = mark[mark.index(">") + 1: mark.rindex("</svg>")]
-    return (f'<svg viewBox="0 0 {width:.0f} {size}" width="{width:.0f}" height="{size}"'
+
+    if stacked:
+        width = max(size, text_w)
+        height = size + fs * 1.15
+        place = f'<g transform="translate({(width - size) / 2:.1f},0)">{inner}</g>'
+        label = (f'<text x="{width / 2:.1f}" y="{size + fs * 0.88:.1f}" text-anchor="middle" ')
+    else:
+        width = size * (1 + gap) + text_w
+        height = size
+        place = inner
+        # the baseline sits just below the equator, so the name is optically centred on it
+        label = f'<text x="{size * (1 + gap):.1f}" y="{size / 2 + fs * 0.35:.1f}" '
+    return (f'<svg viewBox="0 0 {width:.0f} {height:.0f}" width="{width:.0f}" '
+            f'height="{height:.0f}"'
             + (' xmlns="http://www.w3.org/2000/svg"' if standalone else ' class="wordmark"') + ">"
-            + inner
-            # baseline nudged below the equator so the name is optically centred on it
-            + f'<text x="{x:.1f}" y="{size / 2 + fs * 0.35:.1f}" fill="{ink}" '
-              f'font-family="Newsreader, Georgia, \'Times New Roman\', serif" '
+            + place
+            + label
+            + f'fill="{ink}" font-family="Newsreader, Georgia, \'Times New Roman\', serif" '
               f'font-size="{fs:.1f}" font-weight="500" letter-spacing="-0.01em">{text}</text>'
             + "</svg>")
+
+
+def brand_kit(mark_size: int = 256, lockup_size: int = 144) -> dict[str, str]:
+    """Every form the mark is actually asked for, keyed by file name.
+
+    Three axes, and each exists for a real situation: colour or mono (a paper printed in
+    greyscale turns five hues to mud), light or dark ground (a white halo is a visible sliver on
+    a dark slide), and horizontal or stacked (a square space needs the stacked one).
+    """
+    out = {}
+    for suffix, theme in (("", LIGHT), ("-dark", DARK)):
+        for tone, is_mono in (("", False), ("-mono", True)):
+            out[f"mark{tone}{suffix}.svg"] = mark_svg(mark_size, mono=is_mono, **theme)
+            out[f"wordmark{tone}{suffix}.svg"] = wordmark_svg(lockup_size, mono=is_mono, **theme)
+            out[f"wordmark-stacked{tone}{suffix}.svg"] = wordmark_svg(
+                lockup_size, mono=is_mono, stacked=True, **theme)
+    return out
+
+
+BRAND_README = """# The terrastat mark
+
+Generated by `terrastat corpus`, never drawn by hand. To change any of it, edit
+`src/terrastat/logo.py` and re-run the command; editing these files directly means losing the
+change at the next build.
+
+## Which file
+
+| you are putting it | use |
+|---|---|
+| a slide, a paper, a README header | `wordmark.svg` — the primary logo |
+| a square or narrow space | `wordmark-stacked.svg` |
+| somewhere the name is already written | `mark.svg` |
+| a browser tab, an avatar, anything under 64 px | `../favicon.svg` |
+| the top of a page, as a hero | `logo.svg` — the full globe with forecast fans |
+
+Add `-dark` for a dark background and `-mono` for one colour. They combine:
+`wordmark-stacked-mono-dark.svg`.
+
+## Why the variants exist
+
+**Dark.** The gaps between arcs are not transparent — they are an opaque halo in the page's
+background colour, which is what makes a later arc pass visibly in front of an earlier one. A
+light-ground file on a dark slide therefore shows white slivers through those gaps. The `-dark`
+files draw the halo in the dark ground instead.
+
+**Mono.** Five hues at 20% grey are mud. A paper printed in greyscale, a stamp, an embroidered
+shirt: the `-mono` files draw every arc in the single ink colour and let the halos do the
+separating.
+
+**Stacked.** A horizontal lockup in a square space either shrinks to nothing or crops. The
+stacked one puts the mark above the name.
+
+## Rules
+
+- **Clear space**: leave at least the radius of the globe on all four sides. Nothing else in it.
+- **Minimum size**: the wordmark stops being readable below about 90 px wide; use `mark.svg`
+  below that, and the favicon below 64.
+- **Do not** recolour the arcs, change their number, put the mark on a busy photograph, or
+  stretch either file non-uniformly.
+- The name is set in **Newsreader** with a serif fallback. An SVG cannot carry a font, so
+  anywhere Newsreader is not installed it will render in Georgia. If that matters for a
+  particular use, convert the text to outlines in that copy.
+"""
 
 
 def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,
