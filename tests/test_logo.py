@@ -224,3 +224,23 @@ def test_the_header_carries_the_mark_and_the_page_writes_both_forms(corpus_root,
         f = out.parent / name
         assert f.read_text(encoding="utf-8").startswith("<svg"), name
         assert "var(--" not in f.read_text(encoding="utf-8"), name
+
+
+def test_the_compact_mark_spreads_its_arcs_across_the_disc():
+    """Three arcs bunched in a middle band leave the rim looking like a detached ring."""
+    r = 64 * 0.40
+    ys = []
+    for ring, lat in zip(logo.synthetic_rings(3), logo.SMALL_LATS):
+        ys += [y for _, y in logo.sphere_arc(ring, r, 32, 32, step=8,
+                                             amp_deg=logo.SMALL_AMP, lat=lat,
+                                             window=logo.SMALL_SMOOTH)]
+    assert max(ys) - min(ys) > r * 1.25            # they span most of the disc's height
+
+
+def test_the_compact_arcs_are_calmer_than_the_page_arcs():
+    """A wiggle tuned for 440 px is a ragged edge at 64."""
+    raw = logo.synthetic_rings(1)[0]["series"]
+    sm = logo.smooth(raw, logo.SMALL_SMOOTH)
+    rough = lambda v: sum(abs(a - b) for a, b in zip(v, v[1:])) / (len(v) - 1)  # noqa: E731
+    assert rough(sm) < rough(raw) / 2
+    assert logo.smooth(raw, 1) == raw

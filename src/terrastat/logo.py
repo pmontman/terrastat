@@ -68,6 +68,12 @@ PLANE_END = WIDTH - 14     # where the future line stops
 TAPER = 0.42               # half-width at a ribbon's ends, as a share of its width in the middle
 HALO = 2.6                 # paper-coloured margin drawn under each arc, so arcs occlude arcs
 SMALL_ARCS = 3             # arcs on the compact mark: five plus fans is mud below 64 px
+# The compact mark sets its own latitudes and amplitude. At the page's +30/0/-24 the three arcs
+# sat in a band across the middle and the rim read as a ring detached from them; spread wide,
+# they nearly touch it and the disc reads as one object.
+SMALL_LATS = (40, 1, -38)
+SMALL_AMP = 10.0
+SMALL_SMOOTH = 5           # a wiggle tuned for 440 px is noise at 64: average it down
 
 
 def _lcg(seed: int):
@@ -289,11 +295,24 @@ def globe_svg(rings: list[dict] | None = None, fan: bool = True, land: bool = Tr
     return "".join(parts)
 
 
+def smooth(values: list[float], window: int) -> list[float]:
+    """A centred moving average. The fine detail that gives the page arcs their character is
+    just a ragged edge once the mark is 64 pixels wide."""
+    if window < 2:
+        return values
+    h = window // 2
+    return [sum(values[max(0, i - h): i + h + 1]) / len(values[max(0, i - h): i + h + 1])
+            for i in range(len(values))]
+
+
 def sphere_arc(ring: dict, r: float, cx: float, cy: float, step: int = 6,
-               amp_deg: float = AMPLITUDE_DEG) -> list[tuple[float, float]]:
+               amp_deg: float = AMPLITUDE_DEG, lat: float | None = None,
+               window: int = 0) -> list[tuple[float, float]]:
     """One parallel, at any size and centre: the same geometry as the page mark, scaled."""
+    series = smooth(ring["series"], window) if window else ring["series"]
+    base = ring["lat"] if lat is None else lat
     return [(cx + x, cy + y) for x, y, _ in
-            (_project(ring["lat"] + amp_deg * ring["series"][i], lon, r)
+            (_project(base + amp_deg * series[i], lon, r)
              for i, lon in enumerate(range(-90, 91, step)))]
 
 
@@ -313,11 +332,11 @@ def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
     if rim:
         parts.append(f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="{ink}" '
                      f'stroke-opacity="0.3" stroke-width="{size * 0.028:.1f}"/>')
-    for ring in synthetic_rings(n_arcs):
-        pts = sphere_arc(ring, r, c, c)
-        parts.append(f'<path d="{_path(ribbon(pts, stroke, stroke * 0.22, taper=0.75), True)}" '
+    for ring, lat in zip(synthetic_rings(n_arcs), SMALL_LATS):
+        pts = sphere_arc(ring, r, c, c, step=8, amp_deg=SMALL_AMP, lat=lat, window=SMALL_SMOOTH)
+        parts.append(f'<path d="{_path(ribbon(pts, stroke, stroke * 0.2, taper=0.45), True)}" '
                      f'fill="{paper}"/>')
-        parts.append(f'<path d="{_path(ribbon(pts, stroke, taper=0.75), True)}" '
+        parts.append(f'<path d="{_path(ribbon(pts, stroke, taper=0.45), True)}" '
                      f'fill="{ring["colour"]}"/>')
     parts.append("</svg>")
     return "".join(parts)
