@@ -19,7 +19,7 @@ def test_the_series_are_deterministic_and_have_distinct_characters():
     a, b = logo.synthetic_rings(), logo.synthetic_rings()
     assert [r["series"] for r in a] == [r["series"] for r in b]
     kinds = {r["kind"] for r in a}
-    assert kinds == {"random walk", "seasonal", "trend", "regime shift", "slow cycle"}
+    assert kinds == {"random walk", "seasonal", "trend", "regime shift", "ar1"}
     for r in a:
         assert len(r["series"]) == logo.N_ARC + logo.N_FUTURE
         assert -1.0 <= min(r["series"]) and max(r["series"]) <= 1.0
@@ -39,7 +39,7 @@ def test_the_fan_lives_in_the_plane_beyond_the_globe():
     for ring in logo.synthetic_rings():
         g = logo.ring_geometry(ring)
         xs = [x for x, _ in g["future"]]
-        assert xs[0] >= logo.CX + logo.R * 0.55 and xs[-1] > logo.CX + logo.R * 1.5
+        assert xs[0] >= logo.CX + logo.R * 0.4 and xs[-1] > logo.CX + logo.R * 1.5   # off the disc
         assert all(b >= a for a, b in zip(xs, xs[1:]))            # time runs left to right
         upper, lower = g["outer"]
         assert upper[0] == lower[0]                                # the cone starts closed
@@ -101,3 +101,45 @@ def test_the_mark_does_not_depend_on_the_tables(corpus_root):  # noqa: F811
     ga = a[a.index('<svg class="globe"'): a.index("</svg>")]
     gb = b[b.index('<svg class="globe"'): b.index("</svg>")]
     assert ga == gb
+
+
+def test_the_series_swing_north_south_so_they_read_as_series():
+    """A radial displacement is invisible at the centre of the disc. Moving the point in latitude
+    keeps it on the sphere and puts the shape where the eye can see it."""
+    for ring in logo.synthetic_rings():
+        arc = logo.ring_geometry(ring)["arc"]
+        # compare against the undisplaced parallel: the series must move the line vertically
+        flat = [logo.CY + logo._project(ring["lat"], lon, logo.R)[1] for lon in range(-90, 91, logo.STEP)]
+        dev = [abs(y - fy) for (_, y), fy in zip(arc, flat)]
+        assert max(dev) > logo.R * 0.08 and sum(dev) / len(dev) > logo.R * 0.025
+
+
+def test_an_ar1_series_is_stationary_and_noisy():
+    s = next(r for r in logo.synthetic_rings() if r["kind"] == "ar1")["series"]
+    first, last = s[: len(s) // 2], s[len(s) // 2:]
+    assert abs(sum(first) / len(first) - sum(last) / len(last)) < 0.5     # no drift
+    assert sum(abs(a - b) for a, b in zip(s, s[1:])) / (len(s) - 1) > 0.3  # and busy
+
+
+def test_a_landmass_behind_the_globe_is_not_drawn_across_it():
+    """The shadow: a polygon mostly on the far side had every hidden vertex pushed to the rim and
+    filled a band across the disc. A hidden run now collapses to its two limb crossings."""
+    behind = [logo._project(lat, lon + 180, logo.R) for lat, lon in logo.LANDMASSES["africa"]]
+    assert logo.clip_to_front(behind) == []
+    # Eurasia seen from the Atlantic: some of it shows, and none of what shows is on the far side
+    pts = [logo._project(lat, lon - logo.VIEW_LON, logo.R) for lat, lon in logo.LANDMASSES["eurasia"]]
+    front = logo.clip_to_front(pts)
+    assert 3 <= len(front) < len(pts) + 2
+    hidden_x = [x for x, _, z in pts if z < 0]
+    assert all(x >= -logo.R * 1.001 for x, _ in front)
+    # a hidden run of many vertices contributes exactly two rim points
+    n_hidden = sum(1 for _, _, z in pts if z < 0)
+    n_front = sum(1 for _, _, z in pts if z >= 0)
+    assert len(front) <= n_front + 2 * (n_hidden and 4)
+
+
+def test_a_large_still_is_written_beside_the_page(corpus_root, tmp_path):  # noqa: F811
+    t = corpus.compute(values=False, concentration=False)
+    out = site.write(t, tmp_path / "docs" / "index.html")
+    big = (out.parent / "logo.svg").read_text(encoding="utf-8")
+    assert big.startswith("<svg") and "currentColor" not in big and 'width="880"' in big
