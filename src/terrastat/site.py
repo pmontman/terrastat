@@ -808,7 +808,9 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     # the whole kit in one folder, so there is one place to look and one place to link
     brand = p.parent / "brand"
     brand.mkdir(parents=True, exist_ok=True)
-    (brand / "logo.svg").write_text(big, encoding="utf-8")
+    # not "logo": this is the explanatory hero, and calling it the logo invited the
+    # question of which of the two was the real one. The wordmark is the logo.
+    (brand / "hero.svg").write_text(big, encoding="utf-8")
     for name, svg in brand_kit().items():
         (brand / name).write_text(svg, encoding="utf-8")
     (brand / "README.md").write_text(BRAND_README, encoding="utf-8")

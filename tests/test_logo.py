@@ -165,10 +165,10 @@ def test_a_landmass_behind_the_globe_is_not_drawn_across_it():
     assert len(front) <= n_front + 2 * (n_hidden and 4)
 
 
-def test_a_large_still_is_written_beside_the_page(corpus_root, tmp_path):  # noqa: F811
+def test_the_explanatory_hero_is_written_beside_the_kit(corpus_root, tmp_path):  # noqa: F811
     t = corpus.compute(values=False, concentration=False)
     out = site.write(t, tmp_path / "docs" / "index.html")
-    big = (out.parent / "brand" / "logo.svg").read_text(encoding="utf-8")
+    big = (out.parent / "brand" / "hero.svg").read_text(encoding="utf-8")
     assert big.startswith("<svg") and "currentColor" not in big and 'width="880"' in big
 
 
@@ -223,7 +223,7 @@ def test_the_header_carries_the_mark_and_the_page_writes_the_kit(corpus_root, tm
     assert (out.parent / "favicon.svg").read_text(encoding="utf-8").startswith("<svg")
     brand = out.parent / "brand"
     assert (brand / "README.md").read_text(encoding="utf-8").startswith("# The terrastat mark")
-    for name in ("logo.svg", *logo.brand_kit()):
+    for name in ("hero.svg", *logo.brand_kit()):
         text = (brand / name).read_text(encoding="utf-8")
         assert text.startswith("<svg") and "var(--" not in text, name
 
