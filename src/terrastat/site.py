@@ -558,6 +558,22 @@ def _leakage_section() -> str:
 """
 
 
+def _pick_rings(rows: list[dict], n: int) -> list[dict]:
+    """Up to ``n`` rings, one per subject first, then whatever is left in order."""
+    from terrastat.logo import domain_of
+
+    chosen, seen = [], set()
+    for r in rows:
+        d = domain_of(r.get("dataset_title") or r.get("description"))
+        if d not in seen:
+            seen.add(d)
+            chosen.append(r)
+    for r in rows:
+        if r not in chosen:
+            chosen.append(r)
+    return chosen[:n]
+
+
 def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
            live_periods: float = LIVE_PERIODS, repo: str | None = None,
            standalone: bool = True, author: str | None = None) -> str:
@@ -575,8 +591,9 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
     rings_df = tables.get("rings")
     if rings_df is None or not getattr(rings_df, "height", 0):
         rings_df = tables.get("specimen", pl.DataFrame())
-    # six arcs on the page: nine read as clutter once each one also carries a fan
-    rings = rings_df.to_dicts()[:6] if getattr(rings_df, "height", 0) else []
+    # five arcs on the page, preferring different subjects: nine read as clutter once each one
+    # also carries a fan, and three ultramarine price series say less than one of each colour
+    rings = _pick_rings(rings_df.to_dicts(), 5) if getattr(rings_df, "height", 0) else []
     asof = length["asof"][0] if length.height else dt.date.today()
     overall = conc.filter(pl.col("frequency") == "*") if conc.height else pl.DataFrame()
 
