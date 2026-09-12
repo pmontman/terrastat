@@ -16,27 +16,40 @@ def _rings():
     ]
 
 
-def test_the_still_is_well_formed_and_theme_driven():
+def test_the_still_is_well_formed_and_flat():
     svg = logo.globe_svg(_rings())
     assert svg.startswith("<svg") and svg.endswith("</svg>")
-    assert svg.count("<path") == svg.count("/>") - svg.count("<circle") - 0 or True
     assert 'viewBox="0 0 320 320"' in svg
-    # colours come from the page, not from the mark
-    assert "currentColor" in svg and "var(--exact)" in svg
-    assert "#2743c4" not in svg
+    assert "currentColor" in svg                       # outline follows the page ink
     assert "nan" not in svg.lower().replace("stroke-linejoin", "")
+    # a logo, not a render: nothing on the far side, nothing faded by depth
+    assert 'stroke-opacity="0.10"' not in svg and "hue-rotate" not in svg
+
+
+def test_rings_are_coloured_by_subject_domain():
+    rings = [{"frequency": "M", "spark": [1.0, 2.0, 1.5] * 8, "dataset_title": "HICP - monthly"},
+             {"frequency": "A", "spark": [1.0, 2.0, 3.0, 2.0], "dataset_title": "Inland fisheries"}]
+    svg = logo.globe_svg(rings)
+    assert logo.PALETTE["prices"] in svg and logo.PALETTE["food"] in svg
+    assert logo.domain_of("Deaths by week") == "people"
+    assert logo.domain_of("Something nobody categorised") == ""
 
 
 def test_every_ring_is_drawn_and_the_fan_opens_on_the_right():
     svg = logo.globe_svg(_rings())
-    # one dashed future segment per visible ring, and three fan bands per ring
-    assert svg.count('stroke-dasharray="3 3"') == 4
-    assert svg.count('fill="var(--exact)"') == 12
-    # fan polygons sit right of centre
-    xs = [float(m) for m in re.findall(r'fill="var\(--exact\)"[^>]*', svg) for m in []]
-    for poly in re.findall(r'd="(M[^"]+) Z" fill="var\(--exact\)"', svg):
+    assert svg.count('stroke-dasharray="4 4"') == 4 * 2      # one dashed future line per ring, two passes
+    assert svg.count('stroke="none"/>') == 4 * 2              # two fan bands per ring
+    for poly in re.findall(r'd="(M[^"]+) Z" fill="#[0-9a-f]{6}"', svg):
         xs = [float(pt.split(",")[0]) for pt in poly[1:].split(" L")]
         assert min(xs) > 160 * 0.9, "the fan must open past the right limb"
+
+
+def test_the_sketch_never_shimmers():
+    """The jitter is a function of the point, not the frame: rendering twice gives the same
+    bytes, and a phase change moves the series but not the wobble."""
+    assert logo.globe_svg(_rings()) == logo.globe_svg(_rings())
+    assert logo._wobble(3, 7) == logo._wobble(3, 7)
+    assert logo._wobble(3, 7) != logo._wobble(3, 8)
 
 
 def test_frequency_sets_latitude_so_annual_sits_near_the_pole():
@@ -46,9 +59,7 @@ def test_frequency_sets_latitude_so_annual_sits_near_the_pole():
 
 
 def test_the_projection_hides_the_far_side():
-    front = logo._project(0, 0, 100)
-    back = logo._project(0, 180, 100)
-    assert front[2] > 0 > back[2]
+    assert logo._project(0, 0, 100)[2] > 0 > logo._project(0, 180, 100)[2]
 
 
 def test_a_ring_with_no_data_does_not_break_the_mark():
@@ -56,19 +67,17 @@ def test_a_ring_with_no_data_does_not_break_the_mark():
     assert "<svg" in svg and "nan" not in svg.lower().replace("stroke-linejoin", "")
 
 
-def test_the_favicon_carries_its_own_colours_and_heavier_strokes():
+def test_the_favicon_has_a_fixed_ink_and_heavier_strokes():
     ico = logo.favicon_svg(_rings())
-    assert "var(--" not in ico and "currentColor" not in ico
-    assert "#2743c4" in ico and 'stroke-width="3"' in ico
-    assert 'viewBox="0 0 64 64"' in ico
-    assert "<title>" not in ico            # no meridians on the small mark
+    assert "currentColor" not in ico and "#151a21" in ico
+    assert 'stroke-width="4.0"' in ico and 'viewBox="0 0 64 64"' in ico
+    assert ico.count("<path") < logo.globe_svg(_rings()).count("<path")   # no meridians
 
 
 def test_the_animation_is_off_for_reduced_motion_and_carries_the_same_series():
     js = logo.animation_script(_rings())
     assert "prefers-reduced-motion" in js
-    assert '"lat":' in js and '"s":[' in js
-    assert js.count('"lat":') == 4
+    assert js.count('"lat":') == 4 and js.count('"c":"#') == 4
     assert "<script>" in js and "</script>" in js
 
 
