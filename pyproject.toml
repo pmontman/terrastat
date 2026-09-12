@@ -38,3 +38,9 @@ terrastat = "terrastat.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Bare `pytest` (what CI runs) does not put the repo root on sys.path; `python -m pytest` does.
+# Declaring it here makes `from tests.test_corpus import ...` work the same way in both.
+pythonpath = ["."]
+testpaths = ["tests"]

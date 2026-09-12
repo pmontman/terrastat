@@ -750,7 +750,7 @@ terrastat search <span class="c">"chicken|poultry"</span></pre>
 
 <footer><div class="wrap">
   <p>Every figure on this page is computed by <code>terrastat corpus</code>, never written by hand.
-  Generated {dt.date.today()} from {_e(sources)}; retrievals
+  Generated {_e(tables.get('generated') or dt.date.today().isoformat())} from {_e(sources)}; retrievals
   {" · ".join(f'{_e(r["source"])} {_e(r["last_retrieved"][:10])}' for r in crawl.iter_rows(named=True))}.</p>
   <p>{(_e(author) + " · ") if author else ""}code Apache-2.0 ·
   <a href="{_e(repo)}">{_e(repo.replace("https://", ""))}</a></p>
