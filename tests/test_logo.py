@@ -251,12 +251,12 @@ def test_the_page_arcs_carry_observation_markers():
     signal that these are series, so the page mark has them."""
     svg = logo.globe_svg()
     c = logo.synthetic_rings()[0]["colour"]
-    dots = re.findall(r'<circle cx="[\d.-]+" cy="[\d.-]+" r="2\.9" fill="' + c + '"/>', svg)
+    dots = re.findall(r'<circle cx="[\d.-]+" cy="[\d.-]+" r="4\.3" fill="' + c + '"/>', svg)
     assert len(dots) == len(logo.ring_geometry(logo.synthetic_rings()[0])["arc"][::logo.MARKER_EVERY])
     # the ribbon is laid down first, so the dots sit on the line rather than under it
     assert svg.index(f'<path d="M' ) < svg.index(dots[0])
     # and not on the compact mark, where they would be noise
-    assert "<circle" not in logo.mark_svg(64, rim=False)
+    assert "<circle" not in logo.mark_svg(64, rim=False)   # rim off: no circles at all
 
 
 def test_markers_land_on_the_observations():
@@ -277,3 +277,35 @@ def test_the_segments_are_long_enough_to_see_a_vertex():
     mid = arc[len(arc) // 3: 2 * len(arc) // 3]
     steps = [abs(b[0] - a[0]) for a, b in zip(mid, mid[1:])]
     assert sum(steps) / len(steps) > 8.0          # pixels between observations, near the centre
+
+
+def test_markers_are_wider_than_the_line_they_sit_on():
+    """At 0.42 of the ribbon width a marker is narrower than its own line and disappears inside
+    it, showing only where the taper narrows. A marker has to be proud of the line."""
+    for width in (7.0, 3.4):
+        assert 2 * width * logo.MARKER_R > width * 1.15
+
+
+def test_the_compact_mark_reads_as_series_through_shape_not_markers():
+    """Its ribbon is a tenth of the mark; a dot proud of a line that thick is a blob. The series
+    character has to come from coarse sampling, light smoothing and a bolder swing."""
+    assert logo.mark_svg(256, rim=False).count("<circle") == 0
+    assert logo.SMALL_STEP > logo.STEP and logo.SMALL_AMP > logo.AMPLITUDE_DEG
+    assert logo.SMALL_SMOOTH < 3
+    r = 256 * 0.40
+    ring, lat = logo.synthetic_rings(1)[0], logo.SMALL_LATS[0]
+    pts = logo.sphere_arc(ring, r, 128, 128, step=logo.SMALL_STEP, amp_deg=logo.SMALL_AMP,
+                          lat=lat, window=logo.SMALL_SMOOTH)
+    steps = [abs(b[0] - a[0]) for a, b in zip(pts, pts[1:])]
+    assert max(steps) > 256 * 0.05                  # segments long enough to see a corner
+    ys = [y for _, y in pts]
+    assert max(ys) - min(ys) > r * 0.30             # and a swing you can read
+
+
+def test_the_compact_ribbon_leaves_room_for_its_own_wiggle():
+    assert logo.SMALL_STROKE < 0.13
+    r = 64 * 0.40
+    ring, lat = logo.synthetic_rings(1)[0], logo.SMALL_LATS[1]
+    ys = [y for _, y in logo.sphere_arc(ring, r, 32, 32, step=logo.SMALL_STEP,
+                                        amp_deg=logo.SMALL_AMP, lat=lat, window=logo.SMALL_SMOOTH)]
+    assert max(ys) - min(ys) > 64 * logo.SMALL_STROKE   # the swing exceeds the line width
