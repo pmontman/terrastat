@@ -253,15 +253,6 @@ def value_table(root=None, sources=None, frequencies=None, per_frequency: int = 
 SHOWCASE = ("FISH_INLAND", "ert_bil_eur_d", "prc_hicp_midx", "apro_ec_poulm", "sts_inpr_m")
 
 
-# Datasets tried first for the globe's parallels: one series per frequency where the corpus has
-# one, so latitude (= frequency) is actually populated. Same rule as SHOWCASE: the longest series
-# in the file that actually varies, nothing cherry-picked for shape.
-LOGO_SHOWCASE = ("ert_bil_eur_d", "ext_st_eu27_2020sitc", "irt_st_m", "prc_hicp_midx",
-                 "namq_10_gdp", "nama_10_gdp",
-                 "FISH_INLAND", "sts_inpr_m", "demo_r_mweek3", "apro_ec_poulm", "ei_bsco_m",
-                 "une_rt_m", "nrg_cb_e")
-
-
 def specimens(root=None, sources=None, frequencies=None, n: int = 4, min_obs: int = 25,
               min_unique_share: float = 0.5, candidates: int = 60,
               hints: tuple[str, ...] = SHOWCASE) -> pl.DataFrame:
@@ -577,8 +568,6 @@ def compute(root=None, sources=None, frequencies=None, asof: dt.date | None = No
     conc = concentration_table(root, sources, frequencies) if concentration else pl.DataFrame()
     return {"length": length, "values": vals, "concentration": conc,
             "crawl": crawled_at(root, sources), "specimen": specimens(root, sources, frequencies),
-            # the parallels of the globe on the page: more rings, spanning frequencies
-            "rings": specimens(root, sources, frequencies, n=9, hints=LOGO_SHOWCASE),
             "generated": dt.date.today().isoformat()}
 
 

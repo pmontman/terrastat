@@ -1,45 +1,35 @@
-"""The mark: a globe whose parallels are real series from the corpus, drawn flat.
+"""The mark: a globe whose parallels are time series, with their forecasts leaving it as fans.
 
-Bold vector rather than a render: a disc with stylised landmasses in a soft wash, and over it a
-few thick, flat-coloured arcs. Each arc is one series wrapped around the sphere, its line riding
-the series' shape. Latitude is frequency, fast at the equator and annual towards the poles; colour
-is subject domain. Past the right limb, *now*, an arc leaves the sphere and opens into a fan of
-widening bands in its own colour — history on the sphere, the future distributed beyond it.
+Flat vector. A disc with stylised landmasses in a soft wash, and over it five thick coloured arcs,
+one per subject. Each arc is a time series wrapped along a parallel: fast series near the
+equator, slow ones towards the poles. At the right limb, *now*, the series leaves the sphere and
+carries on into open space as an ordinary chart line, and a fan of widening bands opens around it
+— history on the globe, the future distributed beside it, on its own flat plane where a fan chart
+is legible.
 
-The motion is a loop. Each arc draws on from the left limb while the globe turns; when its head
-crosses the terminator the fan begins and keeps growing until it has cleared the disc, then fades
-and the arc starts again. The rings are staggered, so the globe is never empty and the cycle has
-no visible seam.
+The series are synthetic, and deliberately so: a random walk, a trend, a seasonal cycle, a slow
+cycle, a regime shift. Real series sampled to fifty points look like noise; these look like the
+things a forecaster recognises, each with a character of its own, and the mark no longer depends
+on which series a crawl happened to store. They are generated from fixed seeds, so every render
+is identical.
 
-Three renderings from one geometry: the still (``globe_svg``, all arcs drawn, fans open), the
-favicon (``favicon_svg``, fewer rings and heavier strokes), and ``animation_script``, which
-replays the loop from the same numbers.
+The motion is a loop. Each arc draws on from the left limb while the landmasses turn beneath it;
+at the limb the line continues into the plane and the fan opens, easing in; then the whole ring
+fades and starts again. Rings are staggered, so the globe is never empty and the cycle has no
+seam. Three renderings share the geometry: the still, the favicon, and the script.
 """
 from __future__ import annotations
 
 import json
 import math
 
-# Latitude of the parallel carrying a series of each frequency.
-FREQ_LAT = {"D": 0, "B": 8, "W": 17, "BW": 24, "M": 32, "Q": 45, "S": 55, "A": 63, "A3": 72, "P": 80}
-
-# Flat, saturated, readable on both grounds. Assigned by subject.
+# Flat, saturated, readable on both grounds.
 PALETTE = {
     "prices": "#2743c4", "output": "#1f9d8a", "labour": "#e07a1f", "trade": "#9b1c2e",
     "people": "#7a4fd1", "food": "#3f9b2f", "energy": "#b8921a",
 }
-DOMAIN_WORDS = {
-    "prices": ("price", "hicp", "rate", "exchange", "interest", "money", "cpi", "inflation"),
-    "output": ("gdp", "production", "industry", "output", "turnover", "value added"),
-    "labour": ("unemploy", "employ", "labour", "labor", "wage", "earning", "job"),
-    "trade": ("trade", "export", "import", "tariff", "balance of payments"),
-    "people": ("death", "health", "population", "migr", "birth", "student", "educat"),
-    "food": ("fish", "poultry", "agri", "crop", "livestock", "milk", "meat", "food"),
-    "energy": ("energy", "electric", "gas", "oil", "fuel", "coal", "renewable"),
-}
 
-# Stylised landmasses, (lat, lon) polygons. Caricatures, not cartography: enough vertices to be
-# recognised at 300 px and no more, so they read as shapes rather than as a map.
+# Stylised landmasses, (lat, lon) polygons. Caricatures, not cartography.
 LANDMASSES = {
     "north america": [(72, -95), (70, -140), (60, -165), (57, -152), (55, -131), (48, -124),
                       (38, -123), (32, -117), (23, -110), (19, -104), (16, -95), (9, -80),
@@ -63,29 +53,72 @@ LANDMASSES = {
                   (-38, 140), (-32, 134), (-34, 123), (-32, 116), (-22, 114), (-14, 127)],
 }
 
-TILT = 14.0            # a slight lean so the parallels curve
-VIEW_LON = -25.0       # the longitude facing the viewer in the still: the Atlantic, both shores
-TERMINATOR = 50.0      # longitude past which an arc becomes a fan
-AMPLITUDE = 0.08       # radial displacement at a series' maximum, as a share of R
-STEP = 4               # degrees of longitude between samples along an arc
-FAN_REACH = 0.42       # how far past the limb the fan extends, as a share of R
-FAN_WIDTH = 0.13       # half-width of the outer band at full reach, as a share of R
+WIDTH, HEIGHT = 440, 300   # wider than tall: the globe on the left, the fans' plane on the right
+CX, CY, R = 150.0, 150.0, 108.0
+TILT = 14.0                # a slight lean so the parallels curve
+VIEW_LON = -25.0           # the longitude facing the viewer in the still: the Atlantic
+STEP = 4                   # degrees of longitude between samples along an arc
+N_ARC = len(range(-90, 91, STEP))
+N_FUTURE = 26              # samples of the series once it has left the sphere
+AMPLITUDE = 0.075          # radial displacement on the sphere, as a share of R
+PLANE_AMP = 0.16           # vertical swing of the line once in the plane, as a share of R
+FAN_WIDTH = 0.34           # half-width of the outer band at the far end, as a share of R
+PLANE_END = WIDTH - 14     # where the future line stops
 
 
-def domain_of(title: str | None) -> str:
-    t = (title or "").lower()
-    for name, words in DOMAIN_WORDS.items():
-        if any(w in t for w in words):
-            return name
-    return ""
+def _lcg(seed: int):
+    """A tiny deterministic generator: the mark must be identical on every machine."""
+    state = seed * 2654435761 % 2**32 or 1
+    while True:
+        state = (1103515245 * state + 12345) % 2**31
+        yield state / 2**31 * 2 - 1
 
 
-def _colour(ring: dict, index: int) -> str:
-    name = domain_of(ring.get("dataset_title") or ring.get("description"))
-    if name:
-        return PALETTE[name]
-    keys = list(PALETTE)
-    return PALETTE[keys[index % len(keys)]]
+def _series(kind: str, n: int, seed: int) -> list[float]:
+    """One synthetic series with a recognisable character."""
+    rnd = _lcg(seed)
+    out, level = [], 0.0
+    for i in range(n):
+        e = next(rnd)
+        if kind == "random walk":
+            level += 0.35 * e
+            out.append(level)
+        elif kind == "trend":
+            out.append(0.04 * i + 0.25 * e)
+        elif kind == "seasonal":
+            out.append(math.sin(2 * math.pi * i / 12) + 0.012 * i + 0.12 * e)
+        elif kind == "slow cycle":
+            out.append(math.sin(2 * math.pi * i / 40 + 1.0) + 0.10 * e)
+        elif kind == "regime shift":
+            out.append((0.0 if i < n * 0.55 else 1.2) + 0.2 * math.sin(i / 3.0) + 0.2 * e)
+        else:
+            out.append(e)
+    return out
+
+
+def _normalise(values: list[float]) -> list[float]:
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    return [(v - lo) / span * 2 - 1 for v in values]
+
+
+# The five rings on the page, in reading order: subject, series character, latitude, seed.
+RINGS = [
+    {"subject": "prices", "kind": "random walk", "lat": 0, "seed": 11},
+    {"subject": "trade", "kind": "seasonal", "lat": -24, "seed": 7},
+    {"subject": "output", "kind": "trend", "lat": 30, "seed": 5},
+    {"subject": "people", "kind": "regime shift", "lat": -46, "seed": 3},
+    {"subject": "food", "kind": "slow cycle", "lat": 58, "seed": 19},
+]
+
+
+def synthetic_rings(n: int = len(RINGS)) -> list[dict]:
+    """The rings with their series attached: what every renderer draws from."""
+    out = []
+    for spec in RINGS[:n]:
+        s = _normalise(_series(spec["kind"], N_ARC + N_FUTURE, spec["seed"]))
+        out.append({**spec, "colour": PALETTE[spec["subject"]], "series": s})
+    return out
 
 
 def _project(lat: float, lon: float, r: float, tilt: float = TILT) -> tuple[float, float, float]:
@@ -97,164 +130,126 @@ def _project(lat: float, lon: float, r: float, tilt: float = TILT) -> tuple[floa
     return x, -(y * math.cos(tau) - z * math.sin(tau)), y * math.sin(tau) + z * math.cos(tau)
 
 
-SMOOTH = 5             # moving-average window applied before a series becomes an arc
-
-
-def _normalise(values: list[float], smooth: int = SMOOTH) -> list[float]:
-    """Centred to -1..1, after a short moving average. A daily series sampled to ninety points
-    still jumps at every sample; the arc should swoosh, not scribble."""
-    vals = [v for v in values if v is not None]
-    if len(vals) < 2:
-        return [0.0, 0.0]
-    if smooth > 1 and len(vals) > smooth:
-        half = smooth // 2
-        vals = [sum(vals[max(0, i - half): i + half + 1]) / len(vals[max(0, i - half): i + half + 1])
-                for i in range(len(vals))]
-    lo, hi = min(vals), max(vals)
-    span = (hi - lo) or 1.0
-    return [(v - lo) / span * 2 - 1 for v in vals]
-
-
 def _path(points, close: bool = False) -> str:
     d = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in points)
     return d + " Z" if close else d
 
 
-def landmass_paths(r: float, cx: float, cy: float, view_lon: float = VIEW_LON) -> list[str]:
-    """The landmasses as screen polygons. A vertex on the far side is pushed to the limb rather
-    than dropped, so a shape crossing the edge keeps a continuous outline."""
+def landmass_paths(view_lon: float = VIEW_LON) -> list[str]:
+    """Screen polygons. A far-side vertex is pushed to the limb rather than dropped, so a shape
+    crossing the edge keeps a continuous outline."""
     out = []
     for poly in LANDMASSES.values():
         pts = []
         for lat, lon in poly:
-            x, y, z = _project(lat, lon - view_lon, r)
+            x, y, z = _project(lat, lon - view_lon, R)
             if z < 0:
                 h = math.hypot(x, y) or 1.0
-                x, y = x / h * r, y / h * r
-            pts.append((cx + x, cy + y))
+                x, y = x / h * R, y / h * R
+            pts.append((CX + x, CY + y))
         out.append(_path(pts, close=True))
     return out
 
 
-def arc_points(lat: float, series: list[float], r: float) -> list[tuple[float, float, float]]:
-    """(x, y, lon) along the facing side of one parallel, from the left limb to the right,
-    the radius displaced by the series. Screen-space geometry only; nothing hidden by depth."""
-    n = len(series)
-    out = []
+def ring_geometry(ring: dict) -> dict:
+    """Screen-space geometry of one ring: the arc on the sphere, the line in the plane, and the
+    upper and lower edges of the two fan bands, kept as separate edges so a partial wedge can be
+    built correctly while the fan is still opening."""
+    s = ring["series"]
+    arc = []
     for i, lon in enumerate(range(-90, 91, STEP)):
-        x, y, _ = _project(lat, lon, r * (1 + AMPLITUDE * series[i % n]))
-        out.append((x, y, float(lon)))
-    return out
+        x, y, _ = _project(ring["lat"], lon, R * (1 + AMPLITUDE * s[i]))
+        arc.append((CX + x, CY + y))
+    x1, y1 = arc[-1]
+    base = s[N_ARC - 1]
+    future, outer_u, outer_l, inner_u, inner_l = [], [], [], [], []
+    for j in range(N_FUTURE):
+        t = j / (N_FUTURE - 1)
+        x = x1 + (PLANE_END - x1) * t
+        y = y1 + PLANE_AMP * R * (s[N_ARC + j] - base)
+        w = FAN_WIDTH * R * t
+        future.append((x, y))
+        outer_u.append((x, y - w))
+        outer_l.append((x, y + w))
+        inner_u.append((x, y - w * 0.5))
+        inner_l.append((x, y + w * 0.5))
+    return {"colour": ring["colour"], "arc": arc, "future": future,
+            "outer": (outer_u, outer_l), "inner": (inner_u, inner_l)}
 
 
-def fan_geometry(arc: list[tuple[float, float, float]], series: list[float], r: float):
-    """The future: the arc past the terminator, continued straight out beyond the limb.
-
-    Returns the centreline and the two band outlines. Width grows linearly with the fraction of
-    the way along the fan, so the bands open like a cone rather than a tube."""
-    future = [(x, y) for x, y, lon in arc if lon >= TERMINATOR]
-    if len(future) < 2:
-        return [], [], []
-    # The fan opens outward from the sphere's centre through the limb point. Following the
-    # arc's own tangent looks right until you notice that at the right limb an ellipse's tangent
-    # runs almost vertically, so the fan slid along the rim instead of leaving the disc.
-    x1, y1 = future[-1]
-    h = math.hypot(x1, y1) or 1.0
-    dx, dy = x1 / h, y1 / h
-    n = len(series)
-    m = 10
-    for j in range(1, m + 1):
-        t = j / m
-        v = series[(len(arc) + j) % n]
-        future.append((x1 + dx * t * FAN_REACH * r - dy * v * AMPLITUDE * r * 0.6,
-                       y1 + dy * t * FAN_REACH * r + dx * v * AMPLITUDE * r * 0.6))
-    total = len(future) - 1
-    outer_u, outer_l, inner_u, inner_l = [], [], [], []
-    for i, (x, y) in enumerate(future):
-        frac = i / total
-        w = FAN_WIDTH * r * frac
-        outer_u.append((x - dy * w, y + dx * w))
-        outer_l.append((x + dy * w, y - dx * w))
-        inner_u.append((x - dy * w * 0.5, y + dx * w * 0.5))
-        inner_l.append((x + dy * w * 0.5, y - dx * w * 0.5))
-    return future, outer_u + outer_l[::-1], inner_u + inner_l[::-1]
+def band(edges: tuple[list, list], m: int | None = None) -> list[tuple[float, float]]:
+    """A closed wedge from the first ``m`` points of both edges: upper forward, lower back.
+    (Slicing a pre-joined polygon took the first ``m`` of the *reversed* lower edge — its far end —
+    and drew a sliver across the whole globe while the fan was opening.)"""
+    upper, lower = edges
+    m = len(upper) if m is None else m
+    return upper[:m] + lower[:m][::-1]
 
 
-def ring_geometry(rings: list[dict], r: float):
-    """Everything the still and the animation share, per ring."""
-    out = []
-    sign = 1
-    for k, ring in enumerate(rings):
-        lat = FREQ_LAT.get(ring.get("frequency", "M"), 32) * sign
-        sign = -sign
-        series = _normalise(ring.get("spark") or [])
-        arc = arc_points(lat, series, r)
-        centre, outer, inner = fan_geometry(arc, series, r)
-        out.append({"colour": _colour(ring, k), "arc": arc, "fan": centre,
-                    "outer": outer, "inner": inner})
-    return out
-
-
-def globe_svg(rings: list[dict], size: int = 320, fan: bool = True, land: bool = True,
-              id_prefix: str = "g", stroke: float = 4.4) -> str:
-    """The still: every arc fully drawn, every fan open. The outline and the landmasses use
-    ``currentColor`` so they follow the page's ink; the arcs carry their own flat colours."""
-    r = size * 0.36
-    cx = cy = size / 2
-    parts = [f'<svg class="globe" viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
-             f'role="img" aria-label="A globe whose parallels are time series from the corpus; '
-             f'past the right limb they open into forecast fans">',
-             f'<defs><clipPath id="{id_prefix}-disc"><circle cx="{cx}" cy="{cy}" r="{r:.1f}"/>'
-             f'</clipPath></defs>']
-    parts.append(f'<circle class="disc" cx="{cx}" cy="{cy}" r="{r:.1f}" fill="currentColor" '
-                 f'fill-opacity="0.045"/>')
+def globe_svg(rings: list[dict] | None = None, fan: bool = True, land: bool = True,
+              id_prefix: str = "g", stroke: float = 4.6, plane_stroke: float = 3.0) -> str:
+    """The still: every arc drawn, every fan open. Outline and landmasses use ``currentColor``
+    so they follow the page's ink; the arcs carry their own flat colours."""
+    rings = synthetic_rings() if rings is None else rings
+    parts = [f'<svg class="globe" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" '
+             f'role="img" aria-label="A globe whose parallels are time series; at the right edge '
+             f'each series leaves the sphere and opens into a forecast fan">',
+             f'<defs><clipPath id="{id_prefix}-disc"><circle cx="{CX}" cy="{CY}" r="{R}"/></clipPath></defs>',
+             f'<circle class="disc" cx="{CX}" cy="{CY}" r="{R}" fill="currentColor" fill-opacity="0.045"/>']
     if land:
         parts.append(f'<g class="land" clip-path="url(#{id_prefix}-disc)" fill="currentColor" '
-                     f'fill-opacity="0.13">')
-        parts += [f'<path d="{d}"/>' for d in landmass_paths(r, cx, cy)]
-        parts.append("</g>")
-    parts.append(f'<circle class="rim" cx="{cx}" cy="{cy}" r="{r:.1f}" fill="none" '
-                 f'stroke="currentColor" stroke-width="{stroke * 0.7:.1f}"/>')
-
+                     f'fill-opacity="0.13">' + "".join(f'<path d="{d}"/>' for d in landmass_paths())
+                     + "</g>")
+    parts.append(f'<circle class="rim" cx="{CX}" cy="{CY}" r="{R}" fill="none" '
+                 f'stroke="currentColor" stroke-width="{stroke * 0.65:.1f}"/>')
     parts.append('<g class="arcs">')
-    for g in ring_geometry(rings, r):
+    for ring in rings:
+        g = ring_geometry(ring)
         c = g["colour"]
-        past = [(cx + x, cy + y) for x, y, lon in g["arc"] if lon <= TERMINATOR]
-        if len(past) > 1:
-            parts.append(f'<path d="{_path(past)}" fill="none" stroke="{c}" '
-                         f'stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round"/>')
-        if fan and g["fan"]:
-            sh = lambda pts: [(cx + x, cy + y) for x, y in pts]  # noqa: E731
-            parts.append(f'<path d="{_path(sh(g["outer"]), True)}" fill="{c}" fill-opacity="0.22"/>')
-            parts.append(f'<path d="{_path(sh(g["inner"]), True)}" fill="{c}" fill-opacity="0.45"/>')
+        parts.append(f'<path d="{_path(g["arc"])}" fill="none" stroke="{c}" stroke-width="{stroke}" '
+                     f'stroke-linecap="round" stroke-linejoin="round"/>')
+        if fan:
+            parts.append(f'<path d="{_path(band(g["outer"]), True)}" fill="{c}" fill-opacity="0.18"/>')
+            parts.append(f'<path d="{_path(band(g["inner"]), True)}" fill="{c}" fill-opacity="0.34"/>')
+            parts.append(f'<path d="{_path(g["future"])}" fill="none" stroke="{c}" '
+                         f'stroke-width="{plane_stroke}" stroke-linecap="round" stroke-linejoin="round"/>')
     parts.append("</g></svg>")
     return "".join(parts)
 
 
-def favicon_svg(rings: list[dict], size: int = 64) -> str:
-    """Four rings, no landmasses, heavier strokes, and a fixed ink: what survives sixteen pixels."""
-    svg = globe_svg(rings[:4], size=size, fan=True, land=False, id_prefix="f", stroke=5.0)
-    return svg.replace('class="globe" ', "").replace("currentColor", "#151a21")
+def favicon_svg(size: int = 64) -> str:
+    """Square, four arcs, no landmasses and no fans, heavy strokes, fixed ink: what survives
+    sixteen pixels."""
+    rings = synthetic_rings(4)
+    r, c = size * 0.42, size / 2
+    parts = [f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
+             f'xmlns="http://www.w3.org/2000/svg">',
+             f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="#151a21" stroke-width="3"/>']
+    for ring in rings:
+        pts = []
+        for i, lon in enumerate(range(-90, 91, 6)):
+            x, y, _ = _project(ring["lat"], lon, r * (1 + 0.09 * ring["series"][i]))
+            pts.append((c + x, c + y))
+        parts.append(f'<path d="{_path(pts)}" fill="none" stroke="{ring["colour"]}" stroke-width="5" '
+                     f'stroke-linecap="round" stroke-linejoin="round"/>')
+    parts.append("</svg>")
+    return "".join(parts)
 
 
-def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 14.0) -> str:
-    """The loop: arcs draw on from the left, cross the terminator, open into fans that clear the
-    disc and fade; rings are staggered; the landmasses turn underneath. Does nothing under
-    reduced-motion, so the still stands."""
-    r = size * 0.36
-    geo = ring_geometry(rings, r)
-    payload = json.dumps([{"c": g["colour"], "arc": [[round(x, 1), round(y, 1)] for x, y, _ in g["arc"]],
-                           "past": sum(1 for *_, lon in g["arc"] if lon <= TERMINATOR),
-                           "fan": [[round(x, 1), round(y, 1)] for x, y in g["fan"]],
-                           "outer": [[round(x, 1), round(y, 1)] for x, y in g["outer"]],
-                           "inner": [[round(x, 1), round(y, 1)] for x, y in g["inner"]]}
-                          for g in geo], separators=(",", ":"))
+def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> str:
+    """The loop, from the same geometry. Does nothing under reduced-motion, so the still stands."""
+    rings = synthetic_rings() if rings is None else rings
+    rnd = lambda pts: [[round(x, 1), round(y, 1)] for x, y in pts]  # noqa: E731
+    payload = json.dumps([{"c": g["colour"], "arc": rnd(g["arc"]), "fut": rnd(g["future"]),
+                           "ou": rnd(g["outer"][0]), "ol": rnd(g["outer"][1]),
+                           "iu": rnd(g["inner"][0]), "il": rnd(g["inner"][1])}
+                          for g in map(ring_geometry, rings)], separators=(",", ":"))
     land = json.dumps(list(LANDMASSES.values()), separators=(",", ":"))
     return f"""<script>
 (function(){{
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   var svg = document.querySelector('svg.globe'); if (!svg) return;
-  var R = {r:.1f}, C = {size / 2}, T = {TILT} * Math.PI / 180, VIEW = {VIEW_LON};
+  var CX = {CX}, CY = {CY}, R = {R}, T = {TILT} * Math.PI / 180, VIEW = {VIEW_LON};
   var rings = {payload}, land = {land}, CYCLE = {cycle_s * 1000}, N = rings.length;
   var arcs = svg.querySelector('g.arcs'), landG = svg.querySelector('g.land');
   function proj(lat, lon) {{
@@ -263,40 +258,39 @@ def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 14.0) 
     return [x, -(y * Math.cos(T) - z * Math.sin(T)), y * Math.sin(T) + z * Math.cos(T)];
   }}
   function path(pts, close) {{ return 'M' + pts.map(function(p){{ return p[0] + ',' + p[1]; }}).join(' L') + (close ? ' Z' : ''); }}
-  function sh(pts) {{ return pts.map(function(p){{ return [(C + p[0]).toFixed(1), (C + p[1]).toFixed(1)]; }}); }}
+  function band(upper, lower, m) {{ return upper.slice(0, m).concat(lower.slice(0, m).reverse()); }}
   function drawLand(rot) {{
     if (!landG) return;
     landG.innerHTML = land.map(function(poly) {{
       return '<path d="' + path(poly.map(function(v) {{
-        var q = proj(v[0], v[1] - VIEW + rot); if (q[2] < 0) {{ var h = Math.hypot(q[0], q[1]) || 1; q[0] = q[0] / h * R; q[1] = q[1] / h * R; }}
-        return [(C + q[0]).toFixed(1), (C + q[1]).toFixed(1)];
+        var q = proj(v[0], v[1] - VIEW + rot);
+        if (q[2] < 0) {{ var h = Math.hypot(q[0], q[1]) || 1; q[0] = q[0] / h * R; q[1] = q[1] / h * R; }}
+        return [(CX + q[0]).toFixed(1), (CY + q[1]).toFixed(1)];
       }}), true) + '"/>';
     }}).join('');
   }}
-  // one ring's cycle: 0..0.40 draw the arc, 0.40..0.88 open the fan, 0.88..1 fade, then restart.
-  // The fan eases in, slow to appear and then opening at a steady pace, and its wedges fade up
-  // over the first stretch so it never pops.
-  var ARC_END = 0.40, FAN_END = 0.88;
+  // one ring's cycle: 0..0.42 draw the arc, 0.42..0.88 the line leaves the sphere and the fan
+  // opens (eased, wedges fading up), 0.88..1 the whole ring fades, then it restarts
+  var ARC_END = 0.42, FAN_END = 0.88;
   function easeIn(x) {{ return x * x * (3 - 2 * x) * 0.6 + x * 0.4; }}
   function drawRings(t) {{
     var out = [];
     rings.forEach(function(g, k) {{
       var u = ((t / CYCLE) + k / N) % 1, c = g.c;
-      var head = Math.min(1, u / ARC_END);
-      var n = Math.max(2, Math.round(g.arc.length * head));
-      var pastN = Math.min(n, g.past);
-      out.push('<path d="' + path(sh(g.arc.slice(0, pastN))) + '" fill="none" stroke="' + c + '" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>');
-      var fanStart = ARC_END * (g.past / g.arc.length);
-      if (u > fanStart) {{
-        var f = easeIn(Math.min(1, (u - fanStart) / (FAN_END - fanStart)));
-        var m = Math.max(2, Math.round(g.fan.length * f)), half = g.outer.length / 2;
-        var outer = g.outer.slice(0, m).concat(g.outer.slice(half, half + m).reverse());
-        var inner = g.inner.slice(0, m).concat(g.inner.slice(half, half + m).reverse());
-        var fade = u > FAN_END ? 1 - (u - FAN_END) / (1 - FAN_END) : Math.min(1, f / 0.25);
-        out.push('<g opacity="' + fade.toFixed(2) + '">'
-          + '<path d="' + path(sh(outer), true) + '" fill="' + c + '" fill-opacity="0.22"/>'
-          + '<path d="' + path(sh(inner), true) + '" fill="' + c + '" fill-opacity="0.45"/></g>');
+      var alpha = u > FAN_END ? 1 - (u - FAN_END) / (1 - FAN_END) : 1;
+      var n = Math.max(2, Math.round(g.arc.length * Math.min(1, u / ARC_END)));
+      var s = '<g opacity="' + alpha.toFixed(2) + '">'
+            + '<path d="' + path(g.arc.slice(0, n)) + '" fill="none" stroke="' + c + '" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>';
+      if (u > ARC_END) {{
+        var f = easeIn(Math.min(1, (u - ARC_END) / (FAN_END - ARC_END)));
+        var m = Math.max(2, Math.round(g.fut.length * f));
+        var fade = Math.min(1, f / 0.25);
+        s += '<g opacity="' + fade.toFixed(2) + '">'
+           + '<path d="' + path(band(g.ou, g.ol, m), true) + '" fill="' + c + '" fill-opacity="0.18"/>'
+           + '<path d="' + path(band(g.iu, g.il, m), true) + '" fill="' + c + '" fill-opacity="0.34"/>'
+           + '<path d="' + path(g.fut.slice(0, m)) + '" fill="none" stroke="' + c + '" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/></g>';
       }}
+      out.push(s + '</g>');
     }});
     arcs.innerHTML = out.join('');
   }}
