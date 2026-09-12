@@ -58,15 +58,21 @@ WIDTH, HEIGHT = 440, 300   # wider than tall: the globe on the left, the fans' p
 CX, CY, R = 150.0, 150.0, 108.0
 TILT = 14.0                # a slight lean so the parallels curve
 VIEW_LON = -25.0           # the longitude facing the viewer in the still: the Atlantic
-STEP = 4                   # degrees of longitude between samples along an arc
+STEP = 6                   # degrees of longitude between samples: long enough that
+                           # each observation is a visible vertex, not a smooth wave
 N_ARC = len(range(-90, 91, STEP))
 N_FUTURE = 26              # samples of the series once it has left the sphere
-AMPLITUDE_DEG = 7.0        # how far a series swings north-south on the sphere, in degrees
-PLANE_AMP = 0.16           # vertical swing of the line once in the plane, as a share of R
+AMPLITUDE_DEG = 10.5       # how far a series swings north-south on the sphere, in degrees
+PLANE_AMP = 0.21           # vertical swing of the line once in the plane, as a share of R
 FAN_WIDTH = 0.34           # half-width of the outer band at the far end, as a share of R
 PLANE_END = WIDTH - 14     # where the future line stops
 TAPER = 0.42               # half-width at a ribbon's ends, as a share of its width in the middle
 HALO = 2.6                 # paper-coloured margin drawn under each arc, so arcs occlude arcs
+# Markers every few observations. A line that swings is a wave; a line with points on it is
+# data. They are the clearest signal that these are series and not decoration, so the page mark
+# carries them -- the compact mark does not, where they would only be noise.
+MARKER_EVERY = 2
+MARKER_R = 0.42            # marker radius, as a share of the ribbon width
 SMALL_ARCS = 3             # arcs on the compact mark: five plus fans is mud below 64 px
 # The compact mark sets its own latitudes and amplitude. At the page's +30/0/-24 the three arcs
 # sat in a band across the middle and the rim read as a ring detached from them; spread wide,
@@ -244,6 +250,15 @@ def ribbon(points: list[tuple[float, float]], width: float, grow: float = 0.0,
     return upper + lower[::-1]
 
 
+def markers(points: list[tuple[float, float]], width: float, colour: str,
+            every: int = MARKER_EVERY, r: float | None = None) -> str:
+    """Dots on the observations. Drawn over the ribbon in its own colour, so they read as points
+    on a line rather than as a second element."""
+    rad = width * MARKER_R if r is None else r
+    return "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{rad:.1f}" fill="{colour}"/>'
+                   for x, y in points[::every])
+
+
 def band(edges: tuple[list, list], m: int | None = None) -> list[tuple[float, float]]:
     """A closed wedge from the first ``m`` points of both edges: upper forward, lower back.
     (Slicing a pre-joined polygon took the first ``m`` of the *reversed* lower edge — its far end —
@@ -288,9 +303,11 @@ def globe_svg(rings: list[dict] | None = None, fan: bool = True, land: bool = Tr
             parts.append(f'<path d="{_path(ribbon(g["future"], plane_stroke, HALO, taper=1.0), True)}" '
                          f'fill="{paper}"/>')
         parts.append(f'<path d="{_path(ribbon(g["arc"], stroke), True)}" fill="{c}"/>')
+        parts.append(markers(g["arc"], stroke, c))
         if fan:
             parts.append(f'<path d="{_path(ribbon(g["future"], plane_stroke, taper=1.0), True)}" '
                          f'fill="{c}"/>')
+            parts.append(markers(g["future"], plane_stroke, c))
     parts.append("</g></svg>")
     return "".join(parts)
 
@@ -406,6 +423,13 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,
     }}
     return up.concat(lo.reverse());
   }}
+  var MARK_EVERY = {MARKER_EVERY}, MARK_R = {MARKER_R};
+  function dots(pts, width, c) {{
+    var out = '';
+    for (var i = 0; i < pts.length; i += MARK_EVERY)
+      out += '<circle cx="' + pts[i][0] + '" cy="' + pts[i][1] + '" r="' + (width * MARK_R).toFixed(1) + '" fill="' + c + '"/>';
+    return out;
+  }}
   function band(upper, lower, m) {{ return upper.slice(0, m).concat(lower.slice(0, m).reverse()); }}
   function clipFront(pts) {{
     var n = pts.length, start = -1;
@@ -447,7 +471,8 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,
       var seg = g.arc.slice(0, n);
       var s = '<g opacity="' + alpha.toFixed(2) + '">'
             + '<path d="' + path(ribbon(seg, 7.0, HALO, TAPER), true) + '" fill="{paper}"/>'
-            + '<path d="' + path(ribbon(seg, 7.0, 0, TAPER), true) + '" fill="' + c + '"/>';
+            + '<path d="' + path(ribbon(seg, 7.0, 0, TAPER), true) + '" fill="' + c + '"/>'
+            + dots(seg, 7.0, c);
       if (u > ARC_END) {{
         var f = easeIn(Math.min(1, (u - ARC_END) / (FAN_END - ARC_END)));
         var m = Math.max(2, Math.round(g.fut.length * f));
@@ -456,7 +481,8 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,
            + '<path d="' + path(band(g.ou, g.ol, m), true) + '" fill="' + c + '" fill-opacity="0.18"/>'
            + '<path d="' + path(band(g.iu, g.il, m), true) + '" fill="' + c + '" fill-opacity="0.34"/>'
            + '<path d="' + path(ribbon(g.fut.slice(0, m), 3.4, HALO, 1.0), true) + '" fill="{paper}"/>'
-           + '<path d="' + path(ribbon(g.fut.slice(0, m), 3.4, 0, 1.0), true) + '" fill="' + c + '"/></g>';
+           + '<path d="' + path(ribbon(g.fut.slice(0, m), 3.4, 0, 1.0), true) + '" fill="' + c + '"/>'
+           + dots(g.fut.slice(0, m), 3.4, c) + '</g>';
       }}
       out.push(s + '</g>');
     }});

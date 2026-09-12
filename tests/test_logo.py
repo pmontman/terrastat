@@ -183,7 +183,7 @@ def test_arcs_are_tapered_ribbons_not_strokes():
     assert thick > thin * 1.8 and thick <= 10.2
     # and the still paints them rather than stroking them
     svg = logo.globe_svg()
-    assert 'stroke-linecap' not in svg and svg.count('<path d="M') > 10
+    assert "stroke-linecap" not in svg and svg.count('<path d="M') > 10
 
 
 def test_each_arc_sits_on_a_paper_halo_so_arcs_occlude_arcs():
@@ -193,7 +193,7 @@ def test_each_arc_sits_on_a_paper_halo_so_arcs_occlude_arcs():
     # bands are the same colour but carry a fill-opacity.
     # per ring: both halos, then both ribbons -- an arc and its own plane line must not punch
     # each other out, only the next ring's halo may cut this one
-    solid = re.findall(r'fill="(#[0-9a-f]{3,6})"/>', svg)
+    solid = re.findall(r'<path d="M[^"]*" fill="(#[0-9a-f]{3,6})"/>', svg)
     for i in range(0, len(solid), 4):
         c = logo.synthetic_rings()[i // 4]["colour"]
         assert solid[i:i + 4] == ["#fff", "#fff", c, c]
@@ -244,3 +244,36 @@ def test_the_compact_arcs_are_calmer_than_the_page_arcs():
     rough = lambda v: sum(abs(a - b) for a, b in zip(v, v[1:])) / (len(v) - 1)  # noqa: E731
     assert rough(sm) < rough(raw) / 2
     assert logo.smooth(raw, 1) == raw
+
+
+def test_the_page_arcs_carry_observation_markers():
+    """A line that swings is a wave; a line with points on it is data. Markers are the clearest
+    signal that these are series, so the page mark has them."""
+    svg = logo.globe_svg()
+    c = logo.synthetic_rings()[0]["colour"]
+    dots = re.findall(r'<circle cx="[\d.-]+" cy="[\d.-]+" r="2\.9" fill="' + c + '"/>', svg)
+    assert len(dots) == len(logo.ring_geometry(logo.synthetic_rings()[0])["arc"][::logo.MARKER_EVERY])
+    # the ribbon is laid down first, so the dots sit on the line rather than under it
+    assert svg.index(f'<path d="M' ) < svg.index(dots[0])
+    # and not on the compact mark, where they would be noise
+    assert "<circle" not in logo.mark_svg(64, rim=False)
+
+
+def test_markers_land_on_the_observations():
+    g = logo.ring_geometry(logo.synthetic_rings()[0])
+    import re
+    got = re.findall(r'<circle cx="([\d.-]+)" cy="([\d.-]+)"',
+                     logo.markers(g["arc"], 7.0, "#000"))
+    assert len(got) == len(g["arc"][::logo.MARKER_EVERY])
+    for (mx, my), (ax, ay) in zip([(float(a), float(b)) for a, b in got], g["arc"][::logo.MARKER_EVERY]):
+        assert abs(mx - ax) < 0.1 and abs(my - ay) < 0.1
+
+
+def test_the_segments_are_long_enough_to_see_a_vertex():
+    """At a four-degree step the arcs were a smooth wave. Longer segments make each observation
+    a visible corner, which is what a plotted series looks like."""
+    assert logo.STEP == 6 and logo.AMPLITUDE_DEG > 9
+    arc = logo.ring_geometry(logo.synthetic_rings()[0])["arc"]
+    mid = arc[len(arc) // 3: 2 * len(arc) // 3]
+    steps = [abs(b[0] - a[0]) for a, b in zip(mid, mid[1:])]
+    assert sum(steps) / len(steps) > 8.0          # pixels between observations, near the centre
