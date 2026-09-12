@@ -24,7 +24,7 @@ def test_the_still_is_well_formed_and_flat():
     assert "nan" not in svg.lower().replace("stroke-linejoin", "")
     # bold vector, not a sketch and not a render
     assert "translate(0.9,-0.7)" not in svg and "hue-rotate" not in svg
-    assert 'stroke-width="3.2"' in svg
+    assert 'stroke-width="4.4"' in svg
 
 
 def test_the_landmasses_are_drawn_and_stay_on_the_disc():
@@ -81,7 +81,7 @@ def test_the_loop_is_staggered_and_off_for_reduced_motion():
     js = logo.animation_script(_rings())
     assert "prefers-reduced-motion" in js
     assert "k / N" in js                       # rings offset by their index: no visible seam
-    assert "0.55" in js and "0.85" in js       # draw, open, fade
+    assert "ARC_END = 0.40" in js and "FAN_END = 0.88" in js and "easeIn" in js
     assert js.count('"c":"#') == 4 and '"fan":[[' in js
     assert "<script>" in js and "</script>" in js
 
@@ -123,3 +123,16 @@ def test_series_are_smoothed_before_they_become_arcs():
         return sum(abs(a - b) for a, b in zip(seq, seq[1:])) / (len(seq) - 1)
     # both are rescaled to -1..1 afterwards, so compare how much they jump step to step
     assert roughness(logo._normalise(jumpy)) < roughness(logo._normalise(jumpy, smooth=1)) / 3
+
+
+def test_the_page_prefers_one_arc_per_subject():
+    rows = [{"dataset_title": "HICP", "spark": [1.0, 2.0]},
+            {"dataset_title": "Money market rates", "spark": [1.0, 2.0]},
+            {"dataset_title": "GDP", "spark": [1.0, 2.0]},
+            {"dataset_title": "Inland fisheries", "spark": [1.0, 2.0]},
+            {"dataset_title": "Exports and imports", "spark": [1.0, 2.0]},
+            {"dataset_title": "Deaths by week", "spark": [1.0, 2.0]}]
+    picked = site._pick_rings(rows, 5)
+    assert [r["dataset_title"] for r in picked] == [
+        "HICP", "GDP", "Inland fisheries", "Exports and imports", "Deaths by week"]
+    assert logo.PALETTE["trade"] == "#9b1c2e"

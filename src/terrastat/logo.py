@@ -25,7 +25,7 @@ FREQ_LAT = {"D": 0, "B": 8, "W": 17, "BW": 24, "M": 32, "Q": 45, "S": 55, "A": 6
 
 # Flat, saturated, readable on both grounds. Assigned by subject.
 PALETTE = {
-    "prices": "#2743c4", "output": "#1f9d8a", "labour": "#e07a1f", "trade": "#c8385f",
+    "prices": "#2743c4", "output": "#1f9d8a", "labour": "#e07a1f", "trade": "#9b1c2e",
     "people": "#7a4fd1", "food": "#3f9b2f", "energy": "#b8921a",
 }
 DOMAIN_WORDS = {
@@ -196,7 +196,7 @@ def ring_geometry(rings: list[dict], r: float):
 
 
 def globe_svg(rings: list[dict], size: int = 320, fan: bool = True, land: bool = True,
-              id_prefix: str = "g", stroke: float = 3.2) -> str:
+              id_prefix: str = "g", stroke: float = 4.4) -> str:
     """The still: every arc fully drawn, every fan open. The outline and the landmasses use
     ``currentColor`` so they follow the page's ink; the arcs carry their own flat colours."""
     r = size * 0.36
@@ -237,7 +237,7 @@ def favicon_svg(rings: list[dict], size: int = 64) -> str:
     return svg.replace('class="globe" ', "").replace("currentColor", "#151a21")
 
 
-def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 9.0) -> str:
+def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 14.0) -> str:
     """The loop: arcs draw on from the left, cross the terminator, open into fans that clear the
     disc and fade; rings are staggered; the landmasses turn underneath. Does nothing under
     reduced-motion, so the still stands."""
@@ -273,21 +273,26 @@ def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 9.0) -
       }}), true) + '"/>';
     }}).join('');
   }}
-  // one ring's cycle: 0..0.55 draw the arc, 0.55..0.85 open the fan, 0.85..1 fade, then restart
+  // one ring's cycle: 0..0.40 draw the arc, 0.40..0.88 open the fan, 0.88..1 fade, then restart.
+  // The fan eases in, slow to appear and then opening at a steady pace, and its wedges fade up
+  // over the first stretch so it never pops.
+  var ARC_END = 0.40, FAN_END = 0.88;
+  function easeIn(x) {{ return x * x * (3 - 2 * x) * 0.6 + x * 0.4; }}
   function drawRings(t) {{
     var out = [];
     rings.forEach(function(g, k) {{
       var u = ((t / CYCLE) + k / N) % 1, c = g.c;
-      var head = Math.min(1, u / 0.55);
+      var head = Math.min(1, u / ARC_END);
       var n = Math.max(2, Math.round(g.arc.length * head));
       var pastN = Math.min(n, g.past);
-      out.push('<path d="' + path(sh(g.arc.slice(0, pastN))) + '" fill="none" stroke="' + c + '" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>');
-      if (u > 0.55 * (g.past / g.arc.length)) {{
-        var f = Math.min(1, (u - 0.55 * g.past / g.arc.length) / (0.85 - 0.55 * g.past / g.arc.length));
+      out.push('<path d="' + path(sh(g.arc.slice(0, pastN))) + '" fill="none" stroke="' + c + '" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>');
+      var fanStart = ARC_END * (g.past / g.arc.length);
+      if (u > fanStart) {{
+        var f = easeIn(Math.min(1, (u - fanStart) / (FAN_END - fanStart)));
         var m = Math.max(2, Math.round(g.fan.length * f)), half = g.outer.length / 2;
         var outer = g.outer.slice(0, m).concat(g.outer.slice(half, half + m).reverse());
         var inner = g.inner.slice(0, m).concat(g.inner.slice(half, half + m).reverse());
-        var fade = u > 0.85 ? 1 - (u - 0.85) / 0.15 : 1;
+        var fade = u > FAN_END ? 1 - (u - FAN_END) / (1 - FAN_END) : Math.min(1, f / 0.25);
         out.push('<g opacity="' + fade.toFixed(2) + '">'
           + '<path d="' + path(sh(outer), true) + '" fill="' + c + '" fill-opacity="0.22"/>'
           + '<path d="' + path(sh(inner), true) + '" fill="' + c + '" fill-opacity="0.45"/></g>');
