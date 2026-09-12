@@ -97,10 +97,19 @@ def _project(lat: float, lon: float, r: float, tilt: float = TILT) -> tuple[floa
     return x, -(y * math.cos(tau) - z * math.sin(tau)), y * math.sin(tau) + z * math.cos(tau)
 
 
-def _normalise(values: list[float]) -> list[float]:
+SMOOTH = 5             # moving-average window applied before a series becomes an arc
+
+
+def _normalise(values: list[float], smooth: int = SMOOTH) -> list[float]:
+    """Centred to -1..1, after a short moving average. A daily series sampled to ninety points
+    still jumps at every sample; the arc should swoosh, not scribble."""
     vals = [v for v in values if v is not None]
     if len(vals) < 2:
         return [0.0, 0.0]
+    if smooth > 1 and len(vals) > smooth:
+        half = smooth // 2
+        vals = [sum(vals[max(0, i - half): i + half + 1]) / len(vals[max(0, i - half): i + half + 1])
+                for i in range(len(vals))]
     lo, hi = min(vals), max(vals)
     span = (hi - lo) or 1.0
     return [(v - lo) / span * 2 - 1 for v in vals]
@@ -216,11 +225,8 @@ def globe_svg(rings: list[dict], size: int = 320, fan: bool = True, land: bool =
                          f'stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round"/>')
         if fan and g["fan"]:
             sh = lambda pts: [(cx + x, cy + y) for x, y in pts]  # noqa: E731
-            parts.append(f'<path d="{_path(sh(g["outer"]), True)}" fill="{c}" fill-opacity="0.16"/>')
-            parts.append(f'<path d="{_path(sh(g["inner"]), True)}" fill="{c}" fill-opacity="0.30"/>')
-            parts.append(f'<path d="{_path(sh(g["fan"]))}" fill="none" stroke="{c}" '
-                         f'stroke-width="{stroke * 0.7:.1f}" stroke-linecap="round" '
-                         f'stroke-dasharray="5 4"/>')
+            parts.append(f'<path d="{_path(sh(g["outer"]), True)}" fill="{c}" fill-opacity="0.22"/>')
+            parts.append(f'<path d="{_path(sh(g["inner"]), True)}" fill="{c}" fill-opacity="0.45"/>')
     parts.append("</g></svg>")
     return "".join(parts)
 
@@ -283,9 +289,8 @@ def animation_script(rings: list[dict], size: int = 320, cycle_s: float = 9.0) -
         var inner = g.inner.slice(0, m).concat(g.inner.slice(half, half + m).reverse());
         var fade = u > 0.85 ? 1 - (u - 0.85) / 0.15 : 1;
         out.push('<g opacity="' + fade.toFixed(2) + '">'
-          + '<path d="' + path(sh(outer), true) + '" fill="' + c + '" fill-opacity="0.16"/>'
-          + '<path d="' + path(sh(inner), true) + '" fill="' + c + '" fill-opacity="0.30"/>'
-          + '<path d="' + path(sh(g.fan.slice(0, m))) + '" fill="none" stroke="' + c + '" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="5 4"/></g>');
+          + '<path d="' + path(sh(outer), true) + '" fill="' + c + '" fill-opacity="0.22"/>'
+          + '<path d="' + path(sh(inner), true) + '" fill="' + c + '" fill-opacity="0.45"/></g>');
       }}
     }});
     arcs.innerHTML = out.join('');

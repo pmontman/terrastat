@@ -50,8 +50,8 @@ def test_rings_are_coloured_by_subject_domain():
 
 def test_every_ring_has_an_arc_and_a_fan_that_leaves_the_disc():
     svg = logo.globe_svg(_rings())
-    assert svg.count('stroke-dasharray="5 4"') == 4
-    assert svg.count('fill-opacity="0.16"') == 4 and svg.count('fill-opacity="0.30"') == 4
+    assert "stroke-dasharray" not in svg                     # solid wedges, no scribble
+    assert svg.count('fill-opacity="0.22"') == 4 and svg.count('fill-opacity="0.45"') == 4
     r, c = 320 * 0.36, 160
     for g in logo.ring_geometry(_rings(), r):
         x, y = g["fan"][-1]
@@ -111,3 +111,15 @@ def test_the_rings_table_round_trips_through_json(corpus_root, tmp_path):  # noq
     back = corpus.load_tables(corpus.save_tables(t, tmp_path / "t.json"))
     assert back["rings"].height == t["rings"].height
     assert site.render(back) == site.render(t)
+
+
+def test_series_are_smoothed_before_they_become_arcs():
+    """A daily series sampled to ninety points still jumps at every sample. The arc should
+    swoosh, not scribble, so a short moving average runs first."""
+    # a ramp with sample-to-sample noise: a pure alternation would be rescaled straight back to
+    # full swing after averaging, which is not the case the smoothing exists for
+    jumpy = [i / 40 + 0.6 * (i % 2) for i in range(40)]
+    def roughness(seq):
+        return sum(abs(a - b) for a, b in zip(seq, seq[1:])) / (len(seq) - 1)
+    # both are rescaled to -1..1 afterwards, so compare how much they jump step to step
+    assert roughness(logo._normalise(jumpy)) < roughness(logo._normalise(jumpy, smooth=1)) / 3
