@@ -575,7 +575,8 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
     rings_df = tables.get("rings")
     if rings_df is None or not getattr(rings_df, "height", 0):
         rings_df = tables.get("specimen", pl.DataFrame())
-    rings = rings_df.to_dicts() if getattr(rings_df, "height", 0) else []
+    # six arcs on the page: nine read as clutter once each one also carries a fan
+    rings = rings_df.to_dicts()[:6] if getattr(rings_df, "height", 0) else []
     asof = length["asof"][0] if length.height else dt.date.today()
     overall = conc.filter(pl.col("frequency") == "*") if conc.height else pl.DataFrame()
 
@@ -630,8 +631,8 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
    </div>
    <figure class="hero-globe">
     {globe_svg(rings)}
-    <figcaption>Parallels are series from the corpus, fast at the equator and annual at the
-    poles; meridians are subject domains. Past the right limb, history frays into forecast.</figcaption>
+    <figcaption>Each arc is a series from the corpus, coloured by subject: fast series near the
+    equator, annual ones towards the poles. Past the right edge, history opens into forecast.</figcaption>
    </figure>
 
     <div class="figures">
