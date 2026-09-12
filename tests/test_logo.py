@@ -1,4 +1,5 @@
 """The globe mark: real series as parallels, a forecast fan past the right limb."""
+import math
 import re
 
 import polars as pl
@@ -19,11 +20,23 @@ def _rings():
 def test_the_still_is_well_formed_and_flat():
     svg = logo.globe_svg(_rings())
     assert svg.startswith("<svg") and svg.endswith("</svg>")
-    assert 'viewBox="0 0 320 320"' in svg
-    assert "currentColor" in svg                       # outline follows the page ink
+    assert 'viewBox="0 0 320 320"' in svg and "currentColor" in svg
     assert "nan" not in svg.lower().replace("stroke-linejoin", "")
-    # a logo, not a render: nothing on the far side, nothing faded by depth
-    assert 'stroke-opacity="0.10"' not in svg and "hue-rotate" not in svg
+    # bold vector, not a sketch and not a render
+    assert "translate(0.9,-0.7)" not in svg and "hue-rotate" not in svg
+    assert 'stroke-width="3.2"' in svg
+
+
+def test_the_landmasses_are_drawn_and_stay_on_the_disc():
+    svg = logo.globe_svg(_rings())
+    assert svg.count('<g class="land"') == 1
+    assert svg.count("<path d=", 0, svg.index('class="rim"')) == len(logo.LANDMASSES)
+    r, c = 320 * 0.36, 160
+    for d in logo.landmass_paths(r, c, c):
+        for pt in d[1:-2].split(" L"):
+            x, y = map(float, pt.split(","))
+            assert (x - c) ** 2 + (y - c) ** 2 <= (r * 1.001) ** 2
+    assert 'class="land"' not in logo.globe_svg(_rings(), land=False)
 
 
 def test_rings_are_coloured_by_subject_domain():
@@ -35,21 +48,15 @@ def test_rings_are_coloured_by_subject_domain():
     assert logo.domain_of("Something nobody categorised") == ""
 
 
-def test_every_ring_is_drawn_and_the_fan_opens_on_the_right():
+def test_every_ring_has_an_arc_and_a_fan_that_leaves_the_disc():
     svg = logo.globe_svg(_rings())
-    assert svg.count('stroke-dasharray="4 4"') == 4 * 2      # one dashed future line per ring, two passes
-    assert svg.count('stroke="none"/>') == 4 * 2              # two fan bands per ring
-    for poly in re.findall(r'd="(M[^"]+) Z" fill="#[0-9a-f]{6}"', svg):
-        xs = [float(pt.split(",")[0]) for pt in poly[1:].split(" L")]
-        assert min(xs) > 160 * 0.9, "the fan must open past the right limb"
-
-
-def test_the_sketch_never_shimmers():
-    """The jitter is a function of the point, not the frame: rendering twice gives the same
-    bytes, and a phase change moves the series but not the wobble."""
-    assert logo.globe_svg(_rings()) == logo.globe_svg(_rings())
-    assert logo._wobble(3, 7) == logo._wobble(3, 7)
-    assert logo._wobble(3, 7) != logo._wobble(3, 8)
+    assert svg.count('stroke-dasharray="5 4"') == 4
+    assert svg.count('fill-opacity="0.16"') == 4 and svg.count('fill-opacity="0.30"') == 4
+    r, c = 320 * 0.36, 160
+    for g in logo.ring_geometry(_rings(), r):
+        x, y = g["fan"][-1]
+        assert math.hypot(x, y) > r * 1.2, "the fan must reach well past the limb"
+        assert x > 0, "and open on the right"
 
 
 def test_frequency_sets_latitude_so_annual_sits_near_the_pole():
@@ -58,26 +65,24 @@ def test_frequency_sets_latitude_so_annual_sits_near_the_pole():
     assert abs(slow[1]) > abs(fast[1])
 
 
-def test_the_projection_hides_the_far_side():
-    assert logo._project(0, 0, 100)[2] > 0 > logo._project(0, 180, 100)[2]
-
-
 def test_a_ring_with_no_data_does_not_break_the_mark():
     svg = logo.globe_svg([{"frequency": "M", "spark": []}, {"frequency": "Q", "spark": [1.0]}])
     assert "<svg" in svg and "nan" not in svg.lower().replace("stroke-linejoin", "")
 
 
-def test_the_favicon_has_a_fixed_ink_and_heavier_strokes():
+def test_the_favicon_has_a_fixed_ink_and_no_landmasses():
     ico = logo.favicon_svg(_rings())
     assert "currentColor" not in ico and "#151a21" in ico
-    assert 'stroke-width="4.0"' in ico and 'viewBox="0 0 64 64"' in ico
-    assert ico.count("<path") < logo.globe_svg(_rings()).count("<path")   # no meridians
+    assert 'stroke-width="5.0"' in ico and 'viewBox="0 0 64 64"' in ico
+    assert 'class="land"' not in ico
 
 
-def test_the_animation_is_off_for_reduced_motion_and_carries_the_same_series():
+def test_the_loop_is_staggered_and_off_for_reduced_motion():
     js = logo.animation_script(_rings())
     assert "prefers-reduced-motion" in js
-    assert js.count('"lat":') == 4 and js.count('"c":"#') == 4
+    assert "k / N" in js                       # rings offset by their index: no visible seam
+    assert "0.55" in js and "0.85" in js       # draw, open, fade
+    assert js.count('"c":"#') == 4 and '"fan":[[' in js
     assert "<script>" in js and "</script>" in js
 
 
