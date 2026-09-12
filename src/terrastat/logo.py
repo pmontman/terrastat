@@ -71,15 +71,22 @@ HALO = 2.6                 # paper-coloured margin drawn under each arc, so arcs
 # Markers every few observations. A line that swings is a wave; a line with points on it is
 # data. They are the clearest signal that these are series and not decoration, so the page mark
 # carries them -- the compact mark does not, where they would only be noise.
-MARKER_EVERY = 2
-MARKER_R = 0.42            # marker radius, as a share of the ribbon width
+# A marker has to be wider than the line or it hides inside it: at 0.42 of the ribbon width the
+# dots were 5.9 across on a 7-wide line and showed only where the taper narrowed. 0.62 puts the
+# diameter at 1.24 times the line, which reads as a point on a series; spacing them every third
+# observation keeps them from merging into a bead chain.
+MARKER_EVERY = 3
+MARKER_R = 0.62            # marker radius, as a share of the ribbon width
 SMALL_ARCS = 3             # arcs on the compact mark: five plus fans is mud below 64 px
 # The compact mark sets its own latitudes and amplitude. At the page's +30/0/-24 the three arcs
 # sat in a band across the middle and the rim read as a ring detached from them; spread wide,
 # they nearly touch it and the disc reads as one object.
 SMALL_LATS = (40, 1, -38)
-SMALL_AMP = 10.0
-SMALL_SMOOTH = 5           # a wiggle tuned for 440 px is noise at 64: average it down
+SMALL_AMP = 13.5           # bolder than the page: three arcs have room the five do not
+SMALL_SMOOTH = 2           # enough to take the jitter off, not enough to erase the shape
+SMALL_STEP = 11            # long segments, so every observation is a corner you can see
+SMALL_STROKE = 0.115       # share of the mark's size. Thinner than before: a 14%-wide ribbon
+                           # swallows its own wiggle, and the swings are the point
 
 
 def _lcg(seed: int):
@@ -338,11 +345,15 @@ def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
     """The compact mark: three arcs, no continents, no fans, in a square.
 
     Not a shrunk copy of the page globe. Five arcs and five fans are legible at 440 px and mud
-    at 32; three thick ones with air between them keep a silhouette. The continents go too —
-    at this size they are grey noise, and they cost the mark the thing that identifies it.
+    at 32; three with air between them keep a silhouette. The continents go too — at this size
+    they are grey noise, and they cost the mark the thing that identifies it.
+
+    No markers either. The ribbon here is a tenth of the mark's width, and a dot proud of a line
+    that thick is a blob; the arcs have to read as series through their own shape instead, which
+    is why they are sampled coarsely, barely smoothed, and swung harder than the page's.
     """
     r, c = size * 0.40, size / 2
-    stroke = size * 0.135
+    stroke = size * SMALL_STROKE
     head = (f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}"'
             + (' xmlns="http://www.w3.org/2000/svg"' if standalone else ' class="mark"') + ">")
     parts = [head]
@@ -350,7 +361,8 @@ def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
         parts.append(f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="{ink}" '
                      f'stroke-opacity="0.3" stroke-width="{size * 0.028:.1f}"/>')
     for ring, lat in zip(synthetic_rings(n_arcs), SMALL_LATS):
-        pts = sphere_arc(ring, r, c, c, step=8, amp_deg=SMALL_AMP, lat=lat, window=SMALL_SMOOTH)
+        pts = sphere_arc(ring, r, c, c, step=SMALL_STEP, amp_deg=SMALL_AMP, lat=lat,
+                         window=SMALL_SMOOTH)
         parts.append(f'<path d="{_path(ribbon(pts, stroke, stroke * 0.2, taper=0.45), True)}" '
                      f'fill="{paper}"/>')
         parts.append(f'<path d="{_path(ribbon(pts, stroke, taper=0.45), True)}" '
