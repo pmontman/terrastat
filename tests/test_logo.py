@@ -1,89 +1,83 @@
-"""The globe mark: real series as parallels, a forecast fan past the right limb."""
+"""The globe mark: synthetic series as parallels, forecasts fanning out beside the globe."""
 import math
 import re
-
-import polars as pl
 
 from terrastat import corpus, logo, site
 from tests.test_corpus import corpus_root  # noqa: F401
 
 
-def _rings():
-    return [
-        {"frequency": "D", "spark": [float((i * 7) % 11) for i in range(90)]},
-        {"frequency": "M", "spark": [float(i % 12) for i in range(60)]},
-        {"frequency": "A", "spark": [1.0, 3.0, 2.0, 5.0, 4.0, 6.0]},
-        {"frequency": "Q", "spark": [2.0, 1.0, 4.0, 3.0] * 5},
-    ]
-
-
 def test_the_still_is_well_formed_and_flat():
-    svg = logo.globe_svg(_rings())
+    svg = logo.globe_svg()
     assert svg.startswith("<svg") and svg.endswith("</svg>")
-    assert 'viewBox="0 0 320 320"' in svg and "currentColor" in svg
+    assert f'viewBox="0 0 {logo.WIDTH} {logo.HEIGHT}"' in svg and "currentColor" in svg
     assert "nan" not in svg.lower().replace("stroke-linejoin", "")
-    # bold vector, not a sketch and not a render
-    assert "translate(0.9,-0.7)" not in svg and "hue-rotate" not in svg
-    assert 'stroke-width="4.4"' in svg
+    assert 'stroke-width="4.6"' in svg
+    assert "hue-rotate" not in svg and "translate(" not in svg      # neither render nor tremor
 
 
-def test_the_landmasses_are_drawn_and_stay_on_the_disc():
-    svg = logo.globe_svg(_rings())
+def test_the_series_are_deterministic_and_have_distinct_characters():
+    a, b = logo.synthetic_rings(), logo.synthetic_rings()
+    assert [r["series"] for r in a] == [r["series"] for r in b]
+    kinds = {r["kind"] for r in a}
+    assert kinds == {"random walk", "seasonal", "trend", "regime shift", "slow cycle"}
+    for r in a:
+        assert len(r["series"]) == logo.N_ARC + logo.N_FUTURE
+        assert -1.0 <= min(r["series"]) and max(r["series"]) <= 1.0
+    trend = next(r for r in a if r["kind"] == "trend")["series"]
+    assert sum(trend[-10:]) / 10 > sum(trend[:10]) / 10          # a trend goes somewhere
+    seasonal = next(r for r in a if r["kind"] == "seasonal")["series"]
+    assert max(seasonal[:12]) > 0.3 > min(seasonal[:12])           # a season swings within a year
+
+
+def test_every_ring_has_one_colour_per_subject():
+    rings = logo.synthetic_rings()
+    assert len({r["colour"] for r in rings}) == len(rings)
+    assert logo.PALETTE["trade"] in logo.globe_svg()
+
+
+def test_the_fan_lives_in_the_plane_beyond_the_globe():
+    for ring in logo.synthetic_rings():
+        g = logo.ring_geometry(ring)
+        xs = [x for x, _ in g["future"]]
+        assert xs[0] >= logo.CX + logo.R * 0.55 and xs[-1] > logo.CX + logo.R * 1.5
+        assert all(b >= a for a, b in zip(xs, xs[1:]))            # time runs left to right
+        upper, lower = g["outer"]
+        assert upper[0] == lower[0]                                # the cone starts closed
+        assert lower[-1][1] - upper[-1][1] > logo.R * 0.5          # and ends wide open
+
+
+def test_a_partial_wedge_never_crosses_the_globe():
+    """The bug that showed as a polygon across the disc: the first m points of a pre-joined
+    polygon are the start of the upper edge and the far END of the lower one."""
+    g = logo.ring_geometry(logo.synthetic_rings()[0])
+    for m in (2, 5, 12):
+        poly = logo.band(g["outer"], m)
+        assert len(poly) == 2 * m
+        assert max(x for x, _ in poly) <= max(x for x, _ in g["future"][:m]) + 0.01
+        assert min(x for x, _ in poly) >= g["future"][0][0] - 0.01
+
+
+def test_the_landmasses_stay_on_the_disc():
+    svg = logo.globe_svg()
     assert svg.count('<g class="land"') == 1
-    assert svg.count("<path d=", 0, svg.index('class="rim"')) == len(logo.LANDMASSES)
-    r, c = 320 * 0.36, 160
-    for d in logo.landmass_paths(r, c, c):
+    for d in logo.landmass_paths():
         for pt in d[1:-2].split(" L"):
             x, y = map(float, pt.split(","))
-            assert (x - c) ** 2 + (y - c) ** 2 <= (r * 1.001) ** 2
-    assert 'class="land"' not in logo.globe_svg(_rings(), land=False)
+            assert (x - logo.CX) ** 2 + (y - logo.CY) ** 2 <= (logo.R * 1.001) ** 2
 
 
-def test_rings_are_coloured_by_subject_domain():
-    rings = [{"frequency": "M", "spark": [1.0, 2.0, 1.5] * 8, "dataset_title": "HICP - monthly"},
-             {"frequency": "A", "spark": [1.0, 2.0, 3.0, 2.0], "dataset_title": "Inland fisheries"}]
-    svg = logo.globe_svg(rings)
-    assert logo.PALETTE["prices"] in svg and logo.PALETTE["food"] in svg
-    assert logo.domain_of("Deaths by week") == "people"
-    assert logo.domain_of("Something nobody categorised") == ""
+def test_the_favicon_is_square_fixed_ink_and_carries_no_fans():
+    ico = logo.favicon_svg()
+    assert 'viewBox="0 0 64 64"' in ico and "#151a21" in ico and "currentColor" not in ico
+    assert "fill-opacity" not in ico and 'stroke-width="5"' in ico
 
 
-def test_every_ring_has_an_arc_and_a_fan_that_leaves_the_disc():
-    svg = logo.globe_svg(_rings())
-    assert "stroke-dasharray" not in svg                     # solid wedges, no scribble
-    assert svg.count('fill-opacity="0.22"') == 4 and svg.count('fill-opacity="0.45"') == 4
-    r, c = 320 * 0.36, 160
-    for g in logo.ring_geometry(_rings(), r):
-        x, y = g["fan"][-1]
-        assert math.hypot(x, y) > r * 1.2, "the fan must reach well past the limb"
-        assert x > 0, "and open on the right"
-
-
-def test_frequency_sets_latitude_so_annual_sits_near_the_pole():
-    fast = logo._project(logo.FREQ_LAT["D"], 0, 100)
-    slow = logo._project(logo.FREQ_LAT["A"], 0, 100)
-    assert abs(slow[1]) > abs(fast[1])
-
-
-def test_a_ring_with_no_data_does_not_break_the_mark():
-    svg = logo.globe_svg([{"frequency": "M", "spark": []}, {"frequency": "Q", "spark": [1.0]}])
-    assert "<svg" in svg and "nan" not in svg.lower().replace("stroke-linejoin", "")
-
-
-def test_the_favicon_has_a_fixed_ink_and_no_landmasses():
-    ico = logo.favicon_svg(_rings())
-    assert "currentColor" not in ico and "#151a21" in ico
-    assert 'stroke-width="5.0"' in ico and 'viewBox="0 0 64 64"' in ico
-    assert 'class="land"' not in ico
-
-
-def test_the_loop_is_staggered_and_off_for_reduced_motion():
-    js = logo.animation_script(_rings())
-    assert "prefers-reduced-motion" in js
-    assert "k / N" in js                       # rings offset by their index: no visible seam
-    assert "ARC_END = 0.40" in js and "FAN_END = 0.88" in js and "easeIn" in js
-    assert js.count('"c":"#') == 4 and '"fan":[[' in js
-    assert "<script>" in js and "</script>" in js
+def test_the_loop_is_staggered_eased_and_off_for_reduced_motion():
+    js = logo.animation_script()
+    assert "prefers-reduced-motion" in js and "k / N" in js and "easeIn" in js
+    assert "ARC_END = 0.42" in js and "FAN_END = 0.88" in js
+    assert "lower.slice(0, m).reverse()" in js                      # the corrected wedge
+    assert js.count('"c":"#') == 5
 
 
 def test_the_page_embeds_the_globe_the_script_and_the_favicon(corpus_root, tmp_path):  # noqa: F811
@@ -92,47 +86,18 @@ def test_the_page_embeds_the_globe_the_script_and_the_favicon(corpus_root, tmp_p
     assert 'class="hero-globe"' in html and '<svg class="globe"' in html
     assert "prefers-reduced-motion" in html
     assert 'rel="icon" type="image/svg+xml" href="favicon.svg"' in html
-    # the globe sits inside the hero, before the headline figures
     assert html.index('class="hero-globe"') < html.index('class="figures"')
     out = site.write(t, tmp_path / "docs" / "index.html")
     assert (out.parent / "favicon.svg").read_text(encoding="utf-8").startswith("<svg")
 
 
-def test_rings_fall_back_to_the_specimens_when_an_old_tables_file_has_none(corpus_root):  # noqa: F811
+def test_the_mark_does_not_depend_on_the_tables(corpus_root):  # noqa: F811
+    """Synthetic series: the page renders the same globe whatever the crawl stored."""
     t = corpus.compute(values=False, concentration=False)
-    t.pop("rings", None)
-    html = site.render(t, standalone=False)
-    assert '<svg class="globe"' in html
-
-
-def test_the_rings_table_round_trips_through_json(corpus_root, tmp_path):  # noqa: F811
-    t = corpus.compute(values=False, concentration=False)
-    assert isinstance(t["rings"], pl.DataFrame)
-    back = corpus.load_tables(corpus.save_tables(t, tmp_path / "t.json"))
-    assert back["rings"].height == t["rings"].height
-    assert site.render(back) == site.render(t)
-
-
-def test_series_are_smoothed_before_they_become_arcs():
-    """A daily series sampled to ninety points still jumps at every sample. The arc should
-    swoosh, not scribble, so a short moving average runs first."""
-    # a ramp with sample-to-sample noise: a pure alternation would be rescaled straight back to
-    # full swing after averaging, which is not the case the smoothing exists for
-    jumpy = [i / 40 + 0.6 * (i % 2) for i in range(40)]
-    def roughness(seq):
-        return sum(abs(a - b) for a, b in zip(seq, seq[1:])) / (len(seq) - 1)
-    # both are rescaled to -1..1 afterwards, so compare how much they jump step to step
-    assert roughness(logo._normalise(jumpy)) < roughness(logo._normalise(jumpy, smooth=1)) / 3
-
-
-def test_the_page_prefers_one_arc_per_subject():
-    rows = [{"dataset_title": "HICP", "spark": [1.0, 2.0]},
-            {"dataset_title": "Money market rates", "spark": [1.0, 2.0]},
-            {"dataset_title": "GDP", "spark": [1.0, 2.0]},
-            {"dataset_title": "Inland fisheries", "spark": [1.0, 2.0]},
-            {"dataset_title": "Exports and imports", "spark": [1.0, 2.0]},
-            {"dataset_title": "Deaths by week", "spark": [1.0, 2.0]}]
-    picked = site._pick_rings(rows, 5)
-    assert [r["dataset_title"] for r in picked] == [
-        "HICP", "GDP", "Inland fisheries", "Exports and imports", "Deaths by week"]
-    assert logo.PALETTE["trade"] == "#9b1c2e"
+    assert "rings" not in t
+    a = site.render(t, standalone=False)
+    t2 = dict(t, specimen=t["specimen"].clear())
+    b = site.render(t2, standalone=False)
+    ga = a[a.index('<svg class="globe"'): a.index("</svg>")]
+    gb = b[b.index('<svg class="globe"'): b.index("</svg>")]
+    assert ga == gb

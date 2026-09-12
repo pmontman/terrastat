@@ -167,13 +167,13 @@ header.top nav a { color: var(--muted); text-decoration: none; }
 header.top nav a:hover { color: var(--ink); text-decoration: underline; }
 
 .hero { padding: 4.5rem 0 2.5rem; display: grid; gap: 1.5rem 3rem; align-items: center; }
-@media (min-width: 900px) { .hero { grid-template-columns: minmax(0, 1fr) 320px; }
+@media (min-width: 900px) { .hero { grid-template-columns: minmax(0, 1fr) 400px; }
   .hero .figures, .hero .legend { grid-column: 1 / -1; } }
-.hero-globe { margin: 0; color: var(--ink); justify-self: center; max-width: 320px; }
+.hero-globe { margin: 0; color: var(--ink); justify-self: center; max-width: 400px; }
 .hero-globe svg { display: block; width: 100%; height: auto; }
 .hero-globe figcaption { font-size: 0.72rem; color: var(--muted); margin-top: 0.6rem;
   text-align: center; line-height: 1.4; }
-@media (max-width: 899px) { .hero-globe { max-width: 220px; } }
+@media (max-width: 899px) { .hero-globe { max-width: 300px; } }
 .hero h1 { font-size: clamp(2.6rem, 6vw, 4.1rem); line-height: 1.02; margin-bottom: 1rem; }
 .hero .lede { font-size: 1.18rem; color: var(--muted); max-width: 60ch; }
 .hero .lede strong { color: var(--ink); font-weight: 500; }
@@ -558,22 +558,6 @@ def _leakage_section() -> str:
 """
 
 
-def _pick_rings(rows: list[dict], n: int) -> list[dict]:
-    """Up to ``n`` rings, one per subject first, then whatever is left in order."""
-    from terrastat.logo import domain_of
-
-    chosen, seen = [], set()
-    for r in rows:
-        d = domain_of(r.get("dataset_title") or r.get("description"))
-        if d not in seen:
-            seen.add(d)
-            chosen.append(r)
-    for r in rows:
-        if r not in chosen:
-            chosen.append(r)
-    return chosen[:n]
-
-
 def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
            live_periods: float = LIVE_PERIODS, repo: str | None = None,
            standalone: bool = True, author: str | None = None) -> str:
@@ -588,12 +572,7 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
     author = AUTHOR if author is None else author
     length, values = _order(tables["length"]), _order(tables["values"])
     conc, crawl = tables["concentration"], tables["crawl"]
-    rings_df = tables.get("rings")
-    if rings_df is None or not getattr(rings_df, "height", 0):
-        rings_df = tables.get("specimen", pl.DataFrame())
-    # five arcs on the page, preferring different subjects: nine read as clutter once each one
-    # also carries a fan, and three ultramarine price series say less than one of each colour
-    rings = _pick_rings(rings_df.to_dicts(), 5) if getattr(rings_df, "height", 0) else []
+
     asof = length["asof"][0] if length.height else dt.date.today()
     overall = conc.filter(pl.col("frequency") == "*") if conc.height else pl.DataFrame()
 
@@ -647,9 +626,9 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
       absorb more, and more are planned — energy, trade and web-activity series among them.</p>
    </div>
    <figure class="hero-globe">
-    {globe_svg(rings)}
-    <figcaption>Each arc is a series from the corpus, coloured by subject: fast series near the
-    equator, annual ones towards the poles. Past the right edge, history opens into forecast.</figcaption>
+    {globe_svg()}
+    <figcaption>Each arc is a time series on its parallel, coloured by subject. At the right edge
+    it leaves the globe and its forecast fans out beside it.</figcaption>
    </figure>
 
     <div class="figures">
@@ -792,7 +771,7 @@ terrastat search <span class="c">"chicken|poultry"</span></pre>
   <p>{(_e(author) + " · ") if author else ""}code Apache-2.0 ·
   <a href="{_e(repo)}">{_e(repo.replace("https://", ""))}</a></p>
 </div></footer>
-{animation_script(rings) if rings else ""}
+{animation_script()}
 """
     title = "terrastat"
     head = (f'<title>{title}</title>\n<link rel="icon" type="image/svg+xml" href="favicon.svg">\n'
@@ -818,9 +797,5 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(render(tables, years, live_periods, repo, standalone, author), encoding="utf-8")
     log.info("wrote %s", p)
-    rings_df = tables.get("rings")
-    if rings_df is None or not getattr(rings_df, "height", 0):
-        rings_df = tables.get("specimen")
-    if rings_df is not None and getattr(rings_df, "height", 0):
-        (p.parent / "favicon.svg").write_text(favicon_svg(rings_df.to_dicts()), encoding="utf-8")
+    (p.parent / "favicon.svg").write_text(favicon_svg(), encoding="utf-8")
     return p
