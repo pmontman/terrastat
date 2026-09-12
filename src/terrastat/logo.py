@@ -7,8 +7,8 @@ carries on into open space as an ordinary chart line, and a fan of widening band
 — history on the globe, the future distributed beside it, on its own flat plane where a fan chart
 is legible.
 
-The series are synthetic, and deliberately so: a random walk, a trend, a seasonal cycle, a slow
-cycle, a regime shift. Real series sampled to fifty points look like noise; these look like the
+The series are synthetic, and deliberately so: a random walk, a trend, a seasonal cycle, a regime
+shift, a stationary autoregression. Real series sampled to fifty points look like noise; these look like the
 things a forecaster recognises, each with a character of its own, and the mark no longer depends
 on which series a crawl happened to store. They are generated from fixed seeds, so every render
 is identical.
@@ -60,7 +60,7 @@ VIEW_LON = -25.0           # the longitude facing the viewer in the still: the A
 STEP = 4                   # degrees of longitude between samples along an arc
 N_ARC = len(range(-90, 91, STEP))
 N_FUTURE = 26              # samples of the series once it has left the sphere
-AMPLITUDE = 0.075          # radial displacement on the sphere, as a share of R
+AMPLITUDE_DEG = 7.0        # how far a series swings north-south on the sphere, in degrees
 PLANE_AMP = 0.16           # vertical swing of the line once in the plane, as a share of R
 FAN_WIDTH = 0.34           # half-width of the outer band at the far end, as a share of R
 PLANE_END = WIDTH - 14     # where the future line stops
@@ -89,6 +89,9 @@ def _series(kind: str, n: int, seed: int) -> list[float]:
             out.append(math.sin(2 * math.pi * i / 12) + 0.012 * i + 0.12 * e)
         elif kind == "slow cycle":
             out.append(math.sin(2 * math.pi * i / 40 + 1.0) + 0.10 * e)
+        elif kind == "ar1":
+            level = 0.55 * level + e
+            out.append(level)
         elif kind == "regime shift":
             out.append((0.0 if i < n * 0.55 else 1.2) + 0.2 * math.sin(i / 3.0) + 0.2 * e)
         else:
@@ -108,7 +111,7 @@ RINGS = [
     {"subject": "trade", "kind": "seasonal", "lat": -24, "seed": 7},
     {"subject": "output", "kind": "trend", "lat": 30, "seed": 5},
     {"subject": "people", "kind": "regime shift", "lat": -46, "seed": 3},
-    {"subject": "food", "kind": "slow cycle", "lat": 58, "seed": 19},
+    {"subject": "food", "kind": "ar1", "lat": 58, "seed": 19},
 ]
 
 
@@ -135,19 +138,46 @@ def _path(points, close: bool = False) -> str:
     return d + " Z" if close else d
 
 
+def clip_to_front(points: list[tuple[float, float, float]]) -> list[tuple[float, float]]:
+    """Keep the facing part of a polygon. Each run of far-side vertices collapses to its two limb
+    crossings, so a shape that is mostly behind the globe cannot fill the disc.
+
+    (Pushing *every* far-side vertex to the rim looked right for a shape mostly in front, but
+    Eurasia turned through the back with its vertices strung around the whole edge, and the
+    polygon filled a grey band straight across the globe: the "shadow".)"""
+    n = len(points)
+    if n < 3 or not any(z >= 0 for _, _, z in points):
+        return []
+    start = next(i for i in range(n) if points[i][2] >= 0)
+    out = []
+    i = start
+    for _ in range(n):
+        x, y, z = points[i]
+        if z >= 0:
+            out.append((x, y))
+        else:
+            # first vertex of a hidden run: add its limb point, then skip to the run's end
+            j = i
+            while points[(j + 1) % n][2] < 0 and (j + 1) % n != start:
+                j = (j + 1) % n
+            for k in (i, j):
+                px, py, _ = points[k]
+                h = math.hypot(px, py) or 1.0
+                out.append((px / h * R, py / h * R))
+            i = j
+        i = (i + 1) % n
+        if i == start:
+            break
+    return out if len(out) >= 3 else []
+
+
 def landmass_paths(view_lon: float = VIEW_LON) -> list[str]:
-    """Screen polygons. A far-side vertex is pushed to the limb rather than dropped, so a shape
-    crossing the edge keeps a continuous outline."""
+    """Screen polygons of whatever part of each landmass faces the viewer."""
     out = []
     for poly in LANDMASSES.values():
-        pts = []
-        for lat, lon in poly:
-            x, y, z = _project(lat, lon - view_lon, R)
-            if z < 0:
-                h = math.hypot(x, y) or 1.0
-                x, y = x / h * R, y / h * R
-            pts.append((CX + x, CY + y))
-        out.append(_path(pts, close=True))
+        pts = clip_to_front([_project(lat, lon - view_lon, R) for lat, lon in poly])
+        if pts:
+            out.append(_path([(CX + x, CY + y) for x, y in pts], close=True))
     return out
 
 
@@ -157,8 +187,10 @@ def ring_geometry(ring: dict) -> dict:
     built correctly while the fan is still opening."""
     s = ring["series"]
     arc = []
+    # The series moves the point north or south along the sphere. A radial displacement, towards
+    # the viewer, is invisible at the centre of the disc: the arcs read as plain lines.
     for i, lon in enumerate(range(-90, 91, STEP)):
-        x, y, _ = _project(ring["lat"], lon, R * (1 + AMPLITUDE * s[i]))
+        x, y, _ = _project(ring["lat"] + AMPLITUDE_DEG * s[i], lon, R)
         arc.append((CX + x, CY + y))
     x1, y1 = arc[-1]
     base = s[N_ARC - 1]
@@ -228,7 +260,7 @@ def favicon_svg(size: int = 64) -> str:
     for ring in rings:
         pts = []
         for i, lon in enumerate(range(-90, 91, 6)):
-            x, y, _ = _project(ring["lat"], lon, r * (1 + 0.09 * ring["series"][i]))
+            x, y, _ = _project(ring["lat"] + AMPLITUDE_DEG * 1.2 * ring["series"][i], lon, r)
             pts.append((c + x, c + y))
         parts.append(f'<path d="{_path(pts)}" fill="none" stroke="{ring["colour"]}" stroke-width="5" '
                      f'stroke-linecap="round" stroke-linejoin="round"/>')
@@ -259,14 +291,31 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> 
   }}
   function path(pts, close) {{ return 'M' + pts.map(function(p){{ return p[0] + ',' + p[1]; }}).join(' L') + (close ? ' Z' : ''); }}
   function band(upper, lower, m) {{ return upper.slice(0, m).concat(lower.slice(0, m).reverse()); }}
+  function clipFront(pts) {{
+    var n = pts.length, start = -1;
+    for (var i = 0; i < n; i++) if (pts[i][2] >= 0) {{ start = i; break; }}
+    if (n < 3 || start < 0) return [];
+    var out = [], i = start;
+    for (var c = 0; c < n; c++) {{
+      var q = pts[i];
+      if (q[2] >= 0) out.push([q[0], q[1]]);
+      else {{
+        var j = i;
+        while (pts[(j + 1) % n][2] < 0 && (j + 1) % n !== start) j = (j + 1) % n;
+        [i, j].forEach(function(k) {{ var h = Math.hypot(pts[k][0], pts[k][1]) || 1; out.push([pts[k][0] / h * R, pts[k][1] / h * R]); }});
+        i = j;
+      }}
+      i = (i + 1) % n;
+      if (i === start) break;
+    }}
+    return out.length >= 3 ? out : [];
+  }}
   function drawLand(rot) {{
     if (!landG) return;
     landG.innerHTML = land.map(function(poly) {{
-      return '<path d="' + path(poly.map(function(v) {{
-        var q = proj(v[0], v[1] - VIEW + rot);
-        if (q[2] < 0) {{ var h = Math.hypot(q[0], q[1]) || 1; q[0] = q[0] / h * R; q[1] = q[1] / h * R; }}
-        return [(CX + q[0]).toFixed(1), (CY + q[1]).toFixed(1)];
-      }}), true) + '"/>';
+      var front = clipFront(poly.map(function(v) {{ return proj(v[0], v[1] - VIEW + rot); }}));
+      if (!front.length) return '';
+      return '<path d="' + path(front.map(function(q) {{ return [(CX + q[0]).toFixed(1), (CY + q[1]).toFixed(1)]; }}), true) + '"/>';
     }}).join('');
   }}
   // one ring's cycle: 0..0.42 draw the arc, 0.42..0.88 the line leaves the sphere and the fan

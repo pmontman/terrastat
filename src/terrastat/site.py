@@ -25,7 +25,7 @@ import polars as pl
 
 from terrastat.corpus import (FREQ_NAME, LIVE_PERIODS, MIN_YEARS, _fixed, _n, _num,
                              _order, _pct)
-from terrastat.logo import animation_script, favicon_svg, globe_svg
+from terrastat.logo import HEIGHT, WIDTH, animation_script, favicon_svg, globe_svg
 
 log = logging.getLogger(__name__)
 
@@ -798,4 +798,9 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     p.write_text(render(tables, years, live_periods, repo, standalone, author), encoding="utf-8")
     log.info("wrote %s", p)
     (p.parent / "favicon.svg").write_text(favicon_svg(), encoding="utf-8")
+    # the still on its own, at a size you can look at; colours fixed since there is no page
+    big = (globe_svg().replace('class="globe" ', 'xmlns="http://www.w3.org/2000/svg" ')
+           .replace(f'width="{WIDTH}" height="{HEIGHT}"', f'width="{WIDTH * 2}" height="{HEIGHT * 2}"')
+           .replace("currentColor", "#151a21"))
+    (p.parent / "logo.svg").write_text(big, encoding="utf-8")
     return p
