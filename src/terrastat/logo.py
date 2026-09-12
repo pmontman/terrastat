@@ -67,6 +67,7 @@ FAN_WIDTH = 0.34           # half-width of the outer band at the far end, as a s
 PLANE_END = WIDTH - 14     # where the future line stops
 TAPER = 0.42               # half-width at a ribbon's ends, as a share of its width in the middle
 HALO = 2.6                 # paper-coloured margin drawn under each arc, so arcs occlude arcs
+SMALL_ARCS = 3             # arcs on the compact mark: five plus fans is mud below 64 px
 
 
 def _lcg(seed: int):
@@ -288,24 +289,66 @@ def globe_svg(rings: list[dict] | None = None, fan: bool = True, land: bool = Tr
     return "".join(parts)
 
 
-def favicon_svg(size: int = 64) -> str:
-    """Square, four arcs, no landmasses and no fans: what survives sixteen pixels. The ribbons
-    are barely tapered here, since a taper that reads at 300 px vanishes at 16."""
-    rings = synthetic_rings(4)
-    r, c = size * 0.42, size / 2
-    parts = [f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
-             f'xmlns="http://www.w3.org/2000/svg">',
-             f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="#151a21" '
-             f'stroke-opacity="0.35" stroke-width="2"/>']
-    for ring in rings:
-        pts = []
-        for i, lon in enumerate(range(-90, 91, 6)):
-            x, y, _ = _project(ring["lat"] + AMPLITUDE_DEG * 1.2 * ring["series"][i], lon, r)
-            pts.append((c + x, c + y))
-        parts.append(f'<path d="{_path(ribbon(pts, 7.0, 1.4, taper=0.8), True)}" fill="#ffffff"/>')
-        parts.append(f'<path d="{_path(ribbon(pts, 7.0, taper=0.8), True)}" fill="{ring["colour"]}"/>')
+def sphere_arc(ring: dict, r: float, cx: float, cy: float, step: int = 6,
+               amp_deg: float = AMPLITUDE_DEG) -> list[tuple[float, float]]:
+    """One parallel, at any size and centre: the same geometry as the page mark, scaled."""
+    return [(cx + x, cy + y) for x, y, _ in
+            (_project(ring["lat"] + amp_deg * ring["series"][i], lon, r)
+             for i, lon in enumerate(range(-90, 91, step)))]
+
+
+def mark_svg(size: int = 64, n_arcs: int = SMALL_ARCS, ink: str = "#151a21",
+             paper: str = "#ffffff", rim: bool = True, standalone: bool = True) -> str:
+    """The compact mark: three arcs, no continents, no fans, in a square.
+
+    Not a shrunk copy of the page globe. Five arcs and five fans are legible at 440 px and mud
+    at 32; three thick ones with air between them keep a silhouette. The continents go too —
+    at this size they are grey noise, and they cost the mark the thing that identifies it.
+    """
+    r, c = size * 0.40, size / 2
+    stroke = size * 0.135
+    head = (f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}"'
+            + (' xmlns="http://www.w3.org/2000/svg"' if standalone else ' class="mark"') + ">")
+    parts = [head]
+    if rim:
+        parts.append(f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="{ink}" '
+                     f'stroke-opacity="0.3" stroke-width="{size * 0.028:.1f}"/>')
+    for ring in synthetic_rings(n_arcs):
+        pts = sphere_arc(ring, r, c, c)
+        parts.append(f'<path d="{_path(ribbon(pts, stroke, stroke * 0.22, taper=0.75), True)}" '
+                     f'fill="{paper}"/>')
+        parts.append(f'<path d="{_path(ribbon(pts, stroke, taper=0.75), True)}" '
+                     f'fill="{ring["colour"]}"/>')
     parts.append("</svg>")
     return "".join(parts)
+
+
+def favicon_svg(size: int = 64) -> str:
+    """The compact mark, with its own colours: there is no page to inherit ink from."""
+    return mark_svg(size)
+
+
+def wordmark_svg(size: int = 72, text: str = "terrastat", ink: str = "#151a21",
+                 paper: str = "#ffffff", gap: float = 0.24, standalone: bool = True) -> str:
+    """The lockup: the compact mark, then the name, set on the globe's equator.
+
+    A logo rarely travels alone, and this is the form that goes on a slide. The name is set in
+    Newsreader, the page's display face, with a serif fallback for anywhere the webfont is not
+    loaded — a standalone SVG cannot carry the font with it.
+    """
+    fs = size * 0.60
+    x = size * (1 + gap)
+    width = x + len(text) * fs * 0.52
+    mark = mark_svg(size, ink=ink, paper=paper, standalone=False).replace(' class="mark"', "")
+    inner = mark[mark.index(">") + 1: mark.rindex("</svg>")]
+    return (f'<svg viewBox="0 0 {width:.0f} {size}" width="{width:.0f}" height="{size}"'
+            + (' xmlns="http://www.w3.org/2000/svg"' if standalone else ' class="wordmark"') + ">"
+            + inner
+            # baseline nudged below the equator so the name is optically centred on it
+            + f'<text x="{x:.1f}" y="{size / 2 + fs * 0.35:.1f}" fill="{ink}" '
+              f'font-family="Newsreader, Georgia, \'Times New Roman\', serif" '
+              f'font-size="{fs:.1f}" font-weight="500" letter-spacing="-0.01em">{text}</text>'
+            + "</svg>")
 
 
 def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,

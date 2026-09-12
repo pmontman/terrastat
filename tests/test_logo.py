@@ -66,10 +66,37 @@ def test_the_landmasses_stay_on_the_disc():
             assert (x - logo.CX) ** 2 + (y - logo.CY) ** 2 <= (logo.R * 1.001) ** 2
 
 
-def test_the_favicon_is_square_fixed_ink_and_carries_no_fans():
-    ico = logo.favicon_svg()
-    assert 'viewBox="0 0 64 64"' in ico and "#151a21" in ico and "currentColor" not in ico
-    assert "#1f77b4" in ico and "fill-opacity" not in ico      # no fans on the small mark
+def test_the_compact_mark_is_three_arcs_no_land_no_fans():
+    """Five arcs and five fans are legible at 440 px and mud at 32. The continents go too: at
+    that size they are grey noise, and they cost the mark its silhouette."""
+    m = logo.mark_svg(64)
+    assert 'viewBox="0 0 64 64"' in m and "currentColor" not in m
+    assert "fill-opacity" not in m                       # no fan bands
+    assert m.count('<path d="M') == logo.SMALL_ARCS * 2  # one halo and one ribbon per arc
+    assert logo.SMALL_ARCS == 3
+    for ring in logo.synthetic_rings(3):
+        assert ring["colour"] in m
+    assert logo.PALETTE["people"] not in m               # the fourth ring is not drawn
+    assert logo.favicon_svg() == logo.mark_svg(64)
+
+
+def test_the_compact_mark_scales_its_stroke_and_can_lose_its_rim():
+    small, big = logo.mark_svg(32), logo.mark_svg(256)
+    assert 'viewBox="0 0 32 32"' in small and 'viewBox="0 0 256 256"' in big
+    assert "<circle" in big and "<circle" not in logo.mark_svg(64, rim=False)
+    # arcs stay the same share of the mark at any size
+    assert 'width="256"' in big and big.count('<path d="M') == small.count('<path d="M')
+
+
+def test_the_wordmark_sets_the_name_on_the_equator():
+    w = logo.wordmark_svg(72)
+    assert ">terrastat</text>" in w and "Newsreader" in w and "serif" in w
+    import re
+    y = float(re.search(r'<text x="[\d.]+" y="([\d.]+)"', w).group(1))
+    assert 36 < y < 36 + 72 * 0.3            # baseline just below the globe's equator
+    x = float(re.search(r'<text x="([\d.]+)"', w).group(1))
+    assert x > 72                            # clear of the mark
+    assert 'viewBox="0 0 ' in w and w.count("<svg") == 1 and w.count("</svg>") == 1
 
 
 def test_the_loop_is_staggered_eased_and_off_for_reduced_motion():
@@ -182,3 +209,18 @@ def test_the_standalone_still_has_no_css_variables():
     from terrastat import site
     big = logo.globe_svg(ink="#151a21", paper="#ffffff")
     assert "var(--" not in big and "currentColor" not in big
+
+
+def test_the_header_carries_the_mark_and_the_page_writes_both_forms(corpus_root, tmp_path):  # noqa: F811
+    t = corpus.compute(values=False, concentration=False)
+    html = site.render(t, standalone=True)
+    header = html[html.index("<header"): html.index("</header>")]
+    assert '<svg viewBox="0 0 22 22"' in header
+    assert "<circle" not in header                       # no rim at 22 px
+    # the halo must follow the theme, or the gaps between arcs stay white on a dark ground
+    assert "var(--paper)" in header
+    out = site.write(t, tmp_path / "docs" / "index.html")
+    for name in ("favicon.svg", "logo.svg", "mark.svg", "wordmark.svg"):
+        f = out.parent / name
+        assert f.read_text(encoding="utf-8").startswith("<svg"), name
+        assert "var(--" not in f.read_text(encoding="utf-8"), name
