@@ -799,8 +799,8 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     log.info("wrote %s", p)
     (p.parent / "favicon.svg").write_text(favicon_svg(), encoding="utf-8")
     # the still on its own, at a size you can look at; colours fixed since there is no page
-    big = (globe_svg().replace('class="globe" ', 'xmlns="http://www.w3.org/2000/svg" ')
-           .replace(f'width="{WIDTH}" height="{HEIGHT}"', f'width="{WIDTH * 2}" height="{HEIGHT * 2}"')
-           .replace("currentColor", "#151a21"))
+    big = (globe_svg(ink="#151a21", paper="#ffffff")
+           .replace('class="globe" ', 'xmlns="http://www.w3.org/2000/svg" ')
+           .replace(f'width="{WIDTH}" height="{HEIGHT}"', f'width="{WIDTH * 2}" height="{HEIGHT * 2}"'))
     (p.parent / "logo.svg").write_text(big, encoding="utf-8")
     return p

@@ -11,7 +11,7 @@ def test_the_still_is_well_formed_and_flat():
     assert svg.startswith("<svg") and svg.endswith("</svg>")
     assert f'viewBox="0 0 {logo.WIDTH} {logo.HEIGHT}"' in svg and "currentColor" in svg
     assert "nan" not in svg.lower().replace("stroke-linejoin", "")
-    assert 'stroke-width="4.6"' in svg
+    assert logo.PALETTE["prices"] == "#1f77b4"          # matplotlib tab10
     assert "hue-rotate" not in svg and "translate(" not in svg      # neither render nor tremor
 
 
@@ -69,7 +69,7 @@ def test_the_landmasses_stay_on_the_disc():
 def test_the_favicon_is_square_fixed_ink_and_carries_no_fans():
     ico = logo.favicon_svg()
     assert 'viewBox="0 0 64 64"' in ico and "#151a21" in ico and "currentColor" not in ico
-    assert "fill-opacity" not in ico and 'stroke-width="5"' in ico
+    assert "#1f77b4" in ico and "fill-opacity" not in ico      # no fans on the small mark
 
 
 def test_the_loop_is_staggered_eased_and_off_for_reduced_motion():
@@ -143,3 +143,42 @@ def test_a_large_still_is_written_beside_the_page(corpus_root, tmp_path):  # noq
     out = site.write(t, tmp_path / "docs" / "index.html")
     big = (out.parent / "logo.svg").read_text(encoding="utf-8")
     assert big.startswith("<svg") and "currentColor" not in big and 'width="880"' in big
+
+
+def test_arcs_are_tapered_ribbons_not_strokes():
+    """A uniform hairline reads as a plot. A ribbon that is thick in the middle and narrows to
+    points reads as a drawn mark, which is the whole difference."""
+    pts = [(float(x), 100.0) for x in range(0, 200, 5)]
+    poly = logo.ribbon(pts, 10.0)
+    n = len(pts)
+    thick = abs(poly[n // 2][1] - poly[n + n // 2][1])
+    thin = abs(poly[0][1] - poly[-1][1])
+    assert thick > thin * 1.8 and thick <= 10.2
+    # and the still paints them rather than stroking them
+    svg = logo.globe_svg()
+    assert 'stroke-linecap' not in svg and svg.count('<path d="M') > 10
+
+
+def test_each_arc_sits_on_a_paper_halo_so_arcs_occlude_arcs():
+    svg = logo.globe_svg(paper="#fff")
+    assert svg.count('fill="#fff"') == len(logo.synthetic_rings()) * 2      # arc and plane line
+    # the halo is drawn immediately before its own ribbon. Only solid fills count: the fan
+    # bands are the same colour but carry a fill-opacity.
+    # per ring: both halos, then both ribbons -- an arc and its own plane line must not punch
+    # each other out, only the next ring's halo may cut this one
+    solid = re.findall(r'fill="(#[0-9a-f]{3,6})"/>', svg)
+    for i in range(0, len(solid), 4):
+        c = logo.synthetic_rings()[i // 4]["colour"]
+        assert solid[i:i + 4] == ["#fff", "#fff", c, c]
+
+
+def test_the_rim_and_the_land_recede_behind_the_arcs():
+    svg = logo.globe_svg()
+    assert 'stroke-opacity="0.28"' in svg and 'stroke-width="1.6"' in svg
+    assert 'fill-opacity="0.085"' in svg
+
+
+def test_the_standalone_still_has_no_css_variables():
+    from terrastat import site
+    big = logo.globe_svg(ink="#151a21", paper="#ffffff")
+    assert "var(--" not in big and "currentColor" not in big

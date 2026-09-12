@@ -23,10 +23,11 @@ from __future__ import annotations
 import json
 import math
 
-# Flat, saturated, readable on both grounds.
+# matplotlib's tab10, which anyone who plots will recognise. The five subjects the mark uses
+# take blue, red, orange, purple and green: tab10's most separable set.
 PALETTE = {
-    "prices": "#2743c4", "output": "#1f9d8a", "labour": "#e07a1f", "trade": "#9b1c2e",
-    "people": "#7a4fd1", "food": "#3f9b2f", "energy": "#b8921a",
+    "prices": "#1f77b4", "output": "#ff7f0e", "labour": "#8c564b", "trade": "#d62728",
+    "people": "#9467bd", "food": "#2ca02c", "energy": "#bcbd22",
 }
 
 # Stylised landmasses, (lat, lon) polygons. Caricatures, not cartography.
@@ -64,6 +65,8 @@ AMPLITUDE_DEG = 7.0        # how far a series swings north-south on the sphere, 
 PLANE_AMP = 0.16           # vertical swing of the line once in the plane, as a share of R
 FAN_WIDTH = 0.34           # half-width of the outer band at the far end, as a share of R
 PLANE_END = WIDTH - 14     # where the future line stops
+TAPER = 0.42               # half-width at a ribbon's ends, as a share of its width in the middle
+HALO = 2.6                 # paper-coloured margin drawn under each arc, so arcs occlude arcs
 
 
 def _lcg(seed: int):
@@ -209,6 +212,31 @@ def ring_geometry(ring: dict) -> dict:
             "outer": (outer_u, outer_l), "inner": (inner_u, inner_l)}
 
 
+def ribbon(points: list[tuple[float, float]], width: float, grow: float = 0.0,
+           taper: float = TAPER) -> list[tuple[float, float]]:
+    """A closed polygon around ``points``: a stroke with variable width.
+
+    SVG cannot taper a stroke, and a uniform hairline is what made the arcs look plotted rather
+    than drawn. Half-width follows ``taper + (1 - taper) * sin(pi t)``, so a ribbon is thickest
+    in the middle and narrows to clean points, the way the swooshes on a good globe mark do.
+    ``grow`` widens the whole thing, which is how the paper-coloured halo under each arc is made.
+    """
+    n = len(points)
+    if n < 2:
+        return []
+    upper, lower = [], []
+    for i, (x, y) in enumerate(points):
+        t = i / (n - 1)
+        ax, ay = points[max(0, i - 1)]
+        bx, by = points[min(n - 1, i + 1)]
+        dx, dy = bx - ax, by - ay
+        h = math.hypot(dx, dy) or 1.0
+        w = width * 0.5 * (taper + (1 - taper) * math.sin(math.pi * t) ** 0.5) + grow
+        upper.append((x - dy / h * w, y + dx / h * w))
+        lower.append((x + dy / h * w, y - dx / h * w))
+    return upper + lower[::-1]
+
+
 def band(edges: tuple[list, list], m: int | None = None) -> list[tuple[float, float]]:
     """A closed wedge from the first ``m`` points of both edges: upper forward, lower back.
     (Slicing a pre-joined polygon took the first ``m`` of the *reversed* lower edge — its far end —
@@ -219,56 +247,69 @@ def band(edges: tuple[list, list], m: int | None = None) -> list[tuple[float, fl
 
 
 def globe_svg(rings: list[dict] | None = None, fan: bool = True, land: bool = True,
-              id_prefix: str = "g", stroke: float = 4.6, plane_stroke: float = 3.0) -> str:
-    """The still: every arc drawn, every fan open. Outline and landmasses use ``currentColor``
-    so they follow the page's ink; the arcs carry their own flat colours."""
+              id_prefix: str = "g", stroke: float = 7.0, plane_stroke: float = 3.4,
+              ink: str = "currentColor", paper: str = "var(--paper)") -> str:
+    """The still: every arc drawn, every fan open.
+
+    The arcs carry the sphere. The outline is a hairline and the landmasses a faint wash, so
+    nothing competes with them; each arc is a tapered ribbon laid over a paper-coloured halo, so
+    where two cross, the later one passes visibly in front.
+    """
     rings = synthetic_rings() if rings is None else rings
     parts = [f'<svg class="globe" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" '
              f'role="img" aria-label="A globe whose parallels are time series; at the right edge '
              f'each series leaves the sphere and opens into a forecast fan">',
              f'<defs><clipPath id="{id_prefix}-disc"><circle cx="{CX}" cy="{CY}" r="{R}"/></clipPath></defs>',
-             f'<circle class="disc" cx="{CX}" cy="{CY}" r="{R}" fill="currentColor" fill-opacity="0.045"/>']
+             f'<circle class="disc" cx="{CX}" cy="{CY}" r="{R}" fill="{ink}" fill-opacity="0.035"/>']
     if land:
-        parts.append(f'<g class="land" clip-path="url(#{id_prefix}-disc)" fill="currentColor" '
-                     f'fill-opacity="0.13">' + "".join(f'<path d="{d}"/>' for d in landmass_paths())
+        parts.append(f'<g class="land" clip-path="url(#{id_prefix}-disc)" fill="{ink}" '
+                     f'fill-opacity="0.085">' + "".join(f'<path d="{d}"/>' for d in landmass_paths())
                      + "</g>")
-    parts.append(f'<circle class="rim" cx="{CX}" cy="{CY}" r="{R}" fill="none" '
-                 f'stroke="currentColor" stroke-width="{stroke * 0.65:.1f}"/>')
+    parts.append(f'<circle class="rim" cx="{CX}" cy="{CY}" r="{R}" fill="none" stroke="{ink}" '
+                 f'stroke-opacity="0.28" stroke-width="1.6"/>')
     parts.append('<g class="arcs">')
     for ring in rings:
         g = ring_geometry(ring)
         c = g["colour"]
-        parts.append(f'<path d="{_path(g["arc"])}" fill="none" stroke="{c}" stroke-width="{stroke}" '
-                     f'stroke-linecap="round" stroke-linejoin="round"/>')
         if fan:
-            parts.append(f'<path d="{_path(band(g["outer"]), True)}" fill="{c}" fill-opacity="0.18"/>')
-            parts.append(f'<path d="{_path(band(g["inner"]), True)}" fill="{c}" fill-opacity="0.34"/>')
-            parts.append(f'<path d="{_path(g["future"])}" fill="none" stroke="{c}" '
-                         f'stroke-width="{plane_stroke}" stroke-linecap="round" stroke-linejoin="round"/>')
+            parts.append(f'<path d="{_path(band(g["outer"]), True)}" fill="{c}" fill-opacity="0.15"/>')
+            parts.append(f'<path d="{_path(band(g["inner"]), True)}" fill="{c}" fill-opacity="0.30"/>')
+        # halo first, then the ribbon: a later arc punches a clean gap through an earlier one
+        line = g["arc"] + (g["future"] if fan else [])
+        parts.append(f'<path d="{_path(ribbon(g["arc"], stroke, HALO), True)}" fill="{paper}"/>')
+        if fan:
+            parts.append(f'<path d="{_path(ribbon(g["future"], plane_stroke, HALO, taper=1.0), True)}" '
+                         f'fill="{paper}"/>')
+        parts.append(f'<path d="{_path(ribbon(g["arc"], stroke), True)}" fill="{c}"/>')
+        if fan:
+            parts.append(f'<path d="{_path(ribbon(g["future"], plane_stroke, taper=1.0), True)}" '
+                         f'fill="{c}"/>')
     parts.append("</g></svg>")
     return "".join(parts)
 
 
 def favicon_svg(size: int = 64) -> str:
-    """Square, four arcs, no landmasses and no fans, heavy strokes, fixed ink: what survives
-    sixteen pixels."""
+    """Square, four arcs, no landmasses and no fans: what survives sixteen pixels. The ribbons
+    are barely tapered here, since a taper that reads at 300 px vanishes at 16."""
     rings = synthetic_rings(4)
     r, c = size * 0.42, size / 2
     parts = [f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
              f'xmlns="http://www.w3.org/2000/svg">',
-             f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="#151a21" stroke-width="3"/>']
+             f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="#151a21" '
+             f'stroke-opacity="0.35" stroke-width="2"/>']
     for ring in rings:
         pts = []
         for i, lon in enumerate(range(-90, 91, 6)):
             x, y, _ = _project(ring["lat"] + AMPLITUDE_DEG * 1.2 * ring["series"][i], lon, r)
             pts.append((c + x, c + y))
-        parts.append(f'<path d="{_path(pts)}" fill="none" stroke="{ring["colour"]}" stroke-width="5" '
-                     f'stroke-linecap="round" stroke-linejoin="round"/>')
+        parts.append(f'<path d="{_path(ribbon(pts, 7.0, 1.4, taper=0.8), True)}" fill="#ffffff"/>')
+        parts.append(f'<path d="{_path(ribbon(pts, 7.0, taper=0.8), True)}" fill="{ring["colour"]}"/>')
     parts.append("</svg>")
     return "".join(parts)
 
 
-def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> str:
+def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0,
+                     paper: str = "var(--paper)") -> str:
     """The loop, from the same geometry. Does nothing under reduced-motion, so the still stands."""
     rings = synthetic_rings() if rings is None else rings
     rnd = lambda pts: [[round(x, 1), round(y, 1)] for x, y in pts]  # noqa: E731
@@ -290,6 +331,19 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> 
     return [x, -(y * Math.cos(T) - z * Math.sin(T)), y * Math.sin(T) + z * Math.cos(T)];
   }}
   function path(pts, close) {{ return 'M' + pts.map(function(p){{ return p[0] + ',' + p[1]; }}).join(' L') + (close ? ' Z' : ''); }}
+  var TAPER = {TAPER}, HALO = {HALO};
+  function ribbon(pts, width, grow, taper) {{
+    var n = pts.length; if (n < 2) return [];
+    var up = [], lo = [];
+    for (var i = 0; i < n; i++) {{
+      var t = i / (n - 1), a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      var dx = b[0] - a[0], dy = b[1] - a[1], h = Math.hypot(dx, dy) || 1;
+      var w = width * 0.5 * (taper + (1 - taper) * Math.pow(Math.sin(Math.PI * t), 0.5)) + grow;
+      up.push([(pts[i][0] - dy / h * w).toFixed(1), (pts[i][1] + dx / h * w).toFixed(1)]);
+      lo.push([(pts[i][0] + dy / h * w).toFixed(1), (pts[i][1] - dx / h * w).toFixed(1)]);
+    }}
+    return up.concat(lo.reverse());
+  }}
   function band(upper, lower, m) {{ return upper.slice(0, m).concat(lower.slice(0, m).reverse()); }}
   function clipFront(pts) {{
     var n = pts.length, start = -1;
@@ -328,8 +382,10 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> 
       var u = ((t / CYCLE) + k / N) % 1, c = g.c;
       var alpha = u > FAN_END ? 1 - (u - FAN_END) / (1 - FAN_END) : 1;
       var n = Math.max(2, Math.round(g.arc.length * Math.min(1, u / ARC_END)));
+      var seg = g.arc.slice(0, n);
       var s = '<g opacity="' + alpha.toFixed(2) + '">'
-            + '<path d="' + path(g.arc.slice(0, n)) + '" fill="none" stroke="' + c + '" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>';
+            + '<path d="' + path(ribbon(seg, 7.0, HALO, TAPER), true) + '" fill="{paper}"/>'
+            + '<path d="' + path(ribbon(seg, 7.0, 0, TAPER), true) + '" fill="' + c + '"/>';
       if (u > ARC_END) {{
         var f = easeIn(Math.min(1, (u - ARC_END) / (FAN_END - ARC_END)));
         var m = Math.max(2, Math.round(g.fut.length * f));
@@ -337,7 +393,8 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> 
         s += '<g opacity="' + fade.toFixed(2) + '">'
            + '<path d="' + path(band(g.ou, g.ol, m), true) + '" fill="' + c + '" fill-opacity="0.18"/>'
            + '<path d="' + path(band(g.iu, g.il, m), true) + '" fill="' + c + '" fill-opacity="0.34"/>'
-           + '<path d="' + path(g.fut.slice(0, m)) + '" fill="none" stroke="' + c + '" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/></g>';
+           + '<path d="' + path(ribbon(g.fut.slice(0, m), 3.4, HALO, 1.0), true) + '" fill="{paper}"/>'
+           + '<path d="' + path(ribbon(g.fut.slice(0, m), 3.4, 0, 1.0), true) + '" fill="' + c + '"/></g>';
       }}
       out.push(s + '</g>');
     }});
@@ -351,4 +408,4 @@ def animation_script(rings: list[dict] | None = None, cycle_s: float = 14.0) -> 
   }}
   requestAnimationFrame(tick);
 }})();
-</script>"""
+</script>""".replace("{paper}", paper)
