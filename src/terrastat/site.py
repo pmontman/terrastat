@@ -25,6 +25,7 @@ import polars as pl
 
 from terrastat.corpus import (FREQ_NAME, LIVE_PERIODS, MIN_YEARS, _fixed, _n, _num,
                              _order, _pct)
+from terrastat.logo import animation_script, favicon_svg, globe_svg
 
 log = logging.getLogger(__name__)
 
@@ -165,7 +166,14 @@ header.top nav { margin-left: auto; display: flex; gap: 1.1rem; font-size: 0.85r
 header.top nav a { color: var(--muted); text-decoration: none; }
 header.top nav a:hover { color: var(--ink); text-decoration: underline; }
 
-.hero { padding: 4.5rem 0 2.5rem; }
+.hero { padding: 4.5rem 0 2.5rem; display: grid; gap: 1.5rem 3rem; align-items: center; }
+@media (min-width: 900px) { .hero { grid-template-columns: minmax(0, 1fr) 320px; }
+  .hero .figures, .hero .legend { grid-column: 1 / -1; } }
+.hero-globe { margin: 0; color: var(--ink); justify-self: center; max-width: 320px; }
+.hero-globe svg { display: block; width: 100%; height: auto; }
+.hero-globe figcaption { font-size: 0.72rem; color: var(--muted); margin-top: 0.6rem;
+  text-align: center; line-height: 1.4; }
+@media (max-width: 899px) { .hero-globe { max-width: 220px; } }
 .hero h1 { font-size: clamp(2.6rem, 6vw, 4.1rem); line-height: 1.02; margin-bottom: 1rem; }
 .hero .lede { font-size: 1.18rem; color: var(--muted); max-width: 60ch; }
 .hero .lede strong { color: var(--ink); font-weight: 500; }
@@ -564,6 +572,10 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
     author = AUTHOR if author is None else author
     length, values = _order(tables["length"]), _order(tables["values"])
     conc, crawl = tables["concentration"], tables["crawl"]
+    rings_df = tables.get("rings")
+    if rings_df is None or not getattr(rings_df, "height", 0):
+        rings_df = tables.get("specimen", pl.DataFrame())
+    rings = rings_df.to_dicts() if getattr(rings_df, "height", 0) else []
     asof = length["asof"][0] if length.height else dt.date.today()
     overall = conc.filter(pl.col("frequency") == "*") if conc.height else pl.DataFrame()
 
@@ -604,6 +616,7 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
 <div class="wrap">
 
   <div class="hero">
+   <div class="hero-text">
     <p class="eyebrow">An open dataset · in progress</p>
     <h1>A dataset of the world&#8217;s economic time series.</h1>
     <p class="lede">{_n(total)} time series of official economic statistics — prices, trade,
@@ -614,6 +627,12 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
       share is a one-line filter.</p>
     <p class="status"><i class="dot"></i>Three sources so far, and growing. The schema is built to
       absorb more, and more are planned — energy, trade and web-activity series among them.</p>
+   </div>
+   <figure class="hero-globe">
+    {globe_svg(rings)}
+    <figcaption>Parallels are series from the corpus, fast at the equator and annual at the
+    poles; meridians are subject domains. Past the right limb, history frays into forecast.</figcaption>
+   </figure>
 
     <div class="figures">
       {"".join(f'<div><div class="v">{v}</div><div class="k">{k}</div></div>' for v, k in figures)}
@@ -755,9 +774,11 @@ terrastat search <span class="c">"chicken|poultry"</span></pre>
   <p>{(_e(author) + " · ") if author else ""}code Apache-2.0 ·
   <a href="{_e(repo)}">{_e(repo.replace("https://", ""))}</a></p>
 </div></footer>
+{animation_script(rings) if rings else ""}
 """
     title = "terrastat"
-    head = (f'<title>{title}</title>\n<link rel="stylesheet" href="{FONTS}">\n'
+    head = (f'<title>{title}</title>\n<link rel="icon" type="image/svg+xml" href="favicon.svg">\n'
+            f'<link rel="stylesheet" href="{FONTS}">\n'
             f"<style>{CSS}</style>")
     if not standalone:
         return head + body
@@ -779,4 +800,9 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(render(tables, years, live_periods, repo, standalone, author), encoding="utf-8")
     log.info("wrote %s", p)
+    rings_df = tables.get("rings")
+    if rings_df is None or not getattr(rings_df, "height", 0):
+        rings_df = tables.get("specimen")
+    if rings_df is not None and getattr(rings_df, "height", 0):
+        (p.parent / "favicon.svg").write_text(favicon_svg(rings_df.to_dicts()), encoding="utf-8")
     return p

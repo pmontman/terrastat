@@ -342,7 +342,8 @@ def test_the_sparkline_stays_inside_its_box(tables):
     html = site.render(tables, standalone=False)
     if '<svg class="spark"' not in html:
         pytest.skip("this fixture has no drawable specimen")
-    svg = html[html.index('<svg class="spark"'): html.index("</svg>")]
+    start = html.index('<svg class="spark"')
+    svg = html[start: html.index("</svg>", start)]        # the globe's </svg> comes earlier
     box = [float(v) for v in re.search(r'viewBox="([^"]+)"', svg).group(1).split()]
     pts = [tuple(map(float, pair.split(","))) for pair in
            re.search(r'points="([^"]+)"', svg).group(1).split()]
