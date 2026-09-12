@@ -138,6 +138,9 @@ def test_the_tables_survive_a_round_trip_through_json(tables, tmp_path):
     assert back["length"]["asof"].dtype == pl.Date
     assert isinstance(back["length"]["asof"][0], dt.date)
     for name, df in tables.items():
+        if not isinstance(df, pl.DataFrame):          # the generation stamp rides along as a string
+            assert back[name] == df
+            continue
         assert back[name].height == df.height
         if "frequency" in df.columns:
             assert back[name]["frequency"].to_list() == df["frequency"].to_list()

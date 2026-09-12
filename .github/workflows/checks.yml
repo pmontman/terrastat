@@ -11,9 +11,15 @@ on:
     branches: [master, main]
   pull_request:
 
+# A push that lands while the previous run is still going cancels it: one run per branch state.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +31,7 @@ jobs:
 
   docs-are-generated:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
