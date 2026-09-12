@@ -25,8 +25,8 @@ import polars as pl
 
 from terrastat.corpus import (FREQ_NAME, LIVE_PERIODS, MIN_YEARS, _fixed, _n, _num,
                              _order, _pct)
-from terrastat.logo import (HEIGHT, WIDTH, animation_script, favicon_svg, globe_svg,
-                            mark_svg, wordmark_svg)
+from terrastat.logo import (BRAND_README, HEIGHT, WIDTH, animation_script, brand_kit,
+                            favicon_svg, globe_svg, mark_svg)
 
 log = logging.getLogger(__name__)
 
@@ -805,8 +805,11 @@ def write(tables: dict[str, pl.DataFrame], out: Path | str, years: float = MIN_Y
     big = (globe_svg(ink="#151a21", paper="#ffffff")
            .replace('class="globe" ', 'xmlns="http://www.w3.org/2000/svg" ')
            .replace(f'width="{WIDTH}" height="{HEIGHT}"', f'width="{WIDTH * 2}" height="{HEIGHT * 2}"'))
-    (p.parent / "logo.svg").write_text(big, encoding="utf-8")
-    # the two forms a logo is actually asked for: a square mark and a lockup with the name
-    (p.parent / "mark.svg").write_text(mark_svg(256), encoding="utf-8")
-    (p.parent / "wordmark.svg").write_text(wordmark_svg(144), encoding="utf-8")
+    # the whole kit in one folder, so there is one place to look and one place to link
+    brand = p.parent / "brand"
+    brand.mkdir(parents=True, exist_ok=True)
+    (brand / "logo.svg").write_text(big, encoding="utf-8")
+    for name, svg in brand_kit().items():
+        (brand / name).write_text(svg, encoding="utf-8")
+    (brand / "README.md").write_text(BRAND_README, encoding="utf-8")
     return p
