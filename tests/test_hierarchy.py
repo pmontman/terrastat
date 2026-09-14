@@ -130,6 +130,38 @@ def test_hierarchy_table_separates_structure_from_summability(layer):
     assert by["shares"]["total_dims"] == "sex" and by["shares"]["additive"] is False
 
 
+def _dataset_with_unit_codes(tmp_path, dataset_id, unit_codes):
+    dd = tmp_path / "datasets" / "eurostat" / dataset_id
+    dd.mkdir(parents=True)
+    (dd / "dataset.json").write_text(json.dumps({
+        "source": "eurostat", "dataset_id": dataset_id, "title": dataset_id, "n_series": 2,
+        "dimensions": [
+            {"id": "sex", "name": "Sex", "codes": {"M": "Males", "F": "Females", "T": "Total"}},
+            {"id": "unit", "name": "Unit", "codes": unit_codes},
+        ],
+    }), encoding="utf-8")
+
+
+def test_additive_is_unknown_not_true_when_every_unit_is_unlabelled(tmp_path):
+    """A codelist entry can be blank for a deprecated or untranslated code without the unit
+    dimension going missing. If every unit found is like that, the honest answer is 'we don't
+    know', not 'yes, sum away' — ``all([])`` being vacuously true was silently flipping this."""
+    _dataset_with_unit_codes(tmp_path, "blank_units", {"X1": "", "X2": ""})
+    t = hierarchy.hierarchy_table(root=tmp_path)
+    row = t.filter(pl.col("dataset_id") == "blank_units").row(0, named=True)
+    assert row["additive"] is None
+
+
+def test_additive_stays_false_when_known_and_unknown_units_mix(tmp_path):
+    """One additive unit next to an unlabelled one is not enough to call the dataset additive.
+    This is the existing, intentionally unchanged behaviour — locked in so it isn't 'fixed' by
+    accident alongside the all-unknown case above."""
+    _dataset_with_unit_codes(tmp_path, "mixed_units", {"NR": "Number", "X2": ""})
+    t = hierarchy.hierarchy_table(root=tmp_path)
+    row = t.filter(pl.col("dataset_id") == "mixed_units").row(0, named=True)
+    assert row["additive"] is False
+
+
 def _row3(uid, geo, code, label, values, dataset="multi"):
     return {
         "series_uid": uid, "source": "eurostat", "dataset_id": dataset, "frequency": "A",
