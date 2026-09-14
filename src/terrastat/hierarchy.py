@@ -72,6 +72,20 @@ def is_additive(unit_label: str | None) -> bool | None:
     return not bool(_NON_ADDITIVE.search(unit_label))
 
 
+def _additive_verdict(add: list[bool | None]) -> bool | None:
+    """Collapse one dataset's per-unit additivity flags into a single verdict.
+
+    ``None`` when there is nothing to go on: no unit dimension at all, or every unit code found
+    has no label to judge (a codelist entry can be blank for a deprecated or untranslated code).
+    Otherwise ``all(add)``, so a single known non-additive unit — or an unlabelled one sitting next
+    to a known one — makes the whole dataset non-additive, conservatively, per ``is_additive``'s
+    own reasoning.
+    """
+    if not add or all(a is None for a in add):
+        return None
+    return all(add)
+
+
 def code_levels(codes: list[str]) -> dict[str, int]:
     """Depth of each code, by counting how many of its own proper prefixes are also present.
 
@@ -131,8 +145,7 @@ def hierarchy_table(root: Path | str | None = None, sources=None) -> pl.DataFram
             "nested_dims": ",".join(nested),
             "max_depth": depth,
             "n_units": len(units),
-            # a dataset mixing additive and non-additive units is only partly summable
-            "additive": None if not add else (all(a for a in add if a is not None) or None if all(a is None for a in add) else all(add)),
+            "additive": _additive_verdict(add),
             "units": " | ".join(str(u)[:30] for u in units[:4]),
         })
     return pl.DataFrame(rows).sort("n_series", descending=True)
