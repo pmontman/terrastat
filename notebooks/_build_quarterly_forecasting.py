@@ -63,6 +63,15 @@ from terrastat.forecasting import (
 )
 
 ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "pyproject.toml").exists())
+
+def display_path(path):
+    """Keep machine-specific parent folders out of saved notebook outputs."""
+    path = Path(path).resolve()
+    try:
+        return path.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return f"<external>/{path.name}"
+
 SEED, CONTEXT, HORIZON, EPOCHS = 7, 24, 4, 25
 PER_DATASET, CANDIDATES_PER_DATASET = 64, 512
 DATASETS = ["namq_10_gdp", "une_rt_q", "sts_inpr_q", "lc_lci_r2_q"]
@@ -83,7 +92,7 @@ torch.set_num_threads(2)
 torch.use_deterministic_algorithms(True)
 plt.rcParams.update({"figure.figsize": (11, 3.5), "axes.spines.top": False, "axes.spines.right": False})
 print("CPU:", platform.processor() or platform.machine(), "| Python:", platform.python_version())
-print("Data root:", data_dir(), "| Synthetic CI smoke:", SMOKE)
+print("Data root:", display_path(data_dir()), "| Synthetic CI smoke:", SMOKE)
 ''')
 md('''
 ## 1. Read the current snapshot, or explicitly acquire source data
@@ -123,7 +132,7 @@ if not SMOKE and INPUT_MODE == "snapshot":
     files = sorted(snapshot_root.glob("shard-*.parquet"))
     files += [p for p in [manifest_file, snapshot_root / "index.parquet"] if p.exists()]
     candidates = snapshot_candidates(snapshot_root, DATASETS, CANDIDATES_PER_DATASET, SEED, GEOS)
-    print("Reading existing snapshot:", snapshot_root)
+    print("Reading existing snapshot:", display_path(snapshot_root))
 elif not SMOKE and INPUT_MODE == "sources":
     files = [data_dir() / "series" / "eurostat" / "freq=Q" / f"{name}.parquet" for name in DATASETS]
     missing = [name for name, path in zip(DATASETS, files) if not path.exists()]
@@ -480,7 +489,7 @@ summary.to_csv(output / "summary.csv")
 coverage.to_csv(output / "coverage.csv", index=False)
 pd.DataFrame(history).to_csv(output / "learning_curve.csv", index=False)
 torch.save(model.state_dict(), output / "model.pt")
-print("Saved:", output)
+print("Saved:", display_path(output))
 ''')
 
 nb = nbf.v4.new_notebook(cells=cells, metadata={
