@@ -4,11 +4,16 @@ A checklist for anyone training or evaluating a forecasting model on the `terras
 Each entry says what the leak is, why it is a leak, what evidence of it is already visible in the
 data we have collected, and how it could be detected.
 
-The corpus is 956 million series from three sources that overlap heavily, republish each other,
+The corpus combines three sources that overlap heavily, republish each other,
 and publish the same underlying quantity in many presentations. A random train/test split over
 series is therefore almost certainly contaminated. Most of what follows is about that.
 
 Throughout: **`X` is the target, `Z` is anything the model can see.**
+
+Numerical counts below are observations from earlier local crawls, not current corpus totals.
+Use the dated [generated corpus report](corpus.md) for the latest committed measurements.
+The [quarterly tutorial](../notebooks/quarterly_forecasting.ipynb) implements a shared chronological
+split for retrospective forecasting. It does not claim group-held-out transfer or real-time evaluation.
 
 ---
 
@@ -64,8 +69,7 @@ information — see also §I.
 
 ## B. Derived with a lag — the inflation case
 
-This is the one you raised, and it deserves its own entry because the leak runs *backwards in
-time* in a way that is easy to miss.
+Growth-rate transformations can leak information *backwards in time* as well as forwards.
 
 Year-on-year inflation is `π_t = 100·(P_t / P_{t−12} − 1)`. Two distinct problems:
 
@@ -245,7 +249,7 @@ Overlapping datasets republish the same series, and dimension cross-products gen
 are identical because the dimensions that distinguish them are empty in practice.
 
 *Detect:* hash `(frequency, start_date, values)` and look for collisions. Feasible on the aligned
-cohort; expensive over all 956 million.
+cohort; expensive over the full corpus.
 
 ---
 
@@ -260,15 +264,21 @@ the result will not transfer.
 
 ## What this implies for splitting
 
-Categories A, C, D, J and K all defeat a random split over series. The practical mitigations, in
-increasing order of safety:
+First specify the task: future dates of known series, or transfer to unseen series/families.
+For forecasting, impose shared chronological cutoffs across every training series and fit all
+preprocessing on available history. For transfer, add held-out groups as a separate constraint.
 
-1. **Split by dataset**, never by series. Kills A1–A3, C2, and most of K.
-2. **Split by group** (the theme prefix — `nama`, `apro`, `OECD.SDD.NAD`). Also kills C1 and C3.
-3. **Split by country or region.** Kills the geographic identities in C1 outright.
-4. **Deduplicate by value hash first**, across sources, to catch J.
-5. **Exclude future-dated series** from both sides (G).
-6. **Prefer NSA over SA** for real-time work (I).
+Categories A, C, D, J and K undermine a random split over series. Mitigations reduce different
+risks; they do not form a guaranteed ordering of safety:
+
+1. **Split whole datasets** to keep within-table variants together. Copies can cross datasets.
+2. **Split related dataset families** using curated groups. Prefixes alone do not prove independence.
+3. **Audit geographic aggregates** when holding out countries: regional or EU totals may still
+   contain the held-out country.
+4. **Deduplicate across sources**, including transformations and overlapping dates. Exact hashes
+   catch only exact copies, and a detector using future values must not become a model feature.
+5. **Audit projections and reference dates** so future-dated observations cannot enter training.
+6. **Account for seasonal adjustment and revisions** when evaluating historical information sets.
 
 None of these touch E (vintages), which cannot be fixed by splitting and should simply be
 documented as a limitation of a latest-revision corpus.

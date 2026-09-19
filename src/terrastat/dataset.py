@@ -8,12 +8,9 @@ just wants to train something, and it exists because the three steps between "th
 frame either way, so a notebook written against a 200 MB starter set runs unchanged against the
 full corpus.
 
-**Splitting.** ``split()`` never assigns series to folds at random, and refuses to pretend it can.
-A random split over this corpus is contaminated by construction: 78% of datasets publish a total
-alongside its parts, FRED republishes 80,274 OECD series under its own ids, and the same indicator
-appears at several frequencies. Any of those puts a near-copy of a test series into training.
-Splitting on whole *groups* — a dataset, a theme, a country — is what makes the two sides
-genuinely disjoint. See ``docs/leakage.md`` for the twelve mechanisms.
+**Splitting.** ``split()`` assigns whole groups deterministically to folds. Related datasets,
+cross-source copies and aggregates can still span those groups. Forecasting additionally needs
+shared chronological cutoffs; this function does not impose them. See ``docs/leakage.md``.
 
 **Windowing.** ``windows()`` cuts each series into (context, target) pairs with the last ``horizon``
 points held out, which is the forecasting exercise rather than a generic regression.
@@ -30,7 +27,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from terrastat.quality import PERIODS_PER_YEAR, series_root
+from terrastat.quality import series_root
+from terrastat.calendar import regularize
 from terrastat.storage import data_dir
 
 log = logging.getLogger(__name__)
@@ -57,14 +55,22 @@ def load(source: str | Path | None = None, frequencies: list[str] | None = None,
                 f"no snapshot or directory called {source!r}. Build one with "
                 f"`terrastat export {source} --public-only`, or pass source=None for the series layer."
             )
-        pattern = str(p / "*.parquet") if p.is_dir() else str(p)
+        if p.is_dir():
+            # The lookup index has a different schema from the actual series shards.
+            shards = sorted(p.glob("shard-*.parquet"))
+            files = shards or [f for f in sorted(p.glob("*.parquet")) if f.name != "index.parquet"]
+            if not files:
+                raise FileNotFoundError(f"no series Parquet files in {p}")
+            pattern = [str(f) for f in files]
+        else:
+            pattern = str(p)
     lf = pl.scan_parquet(pattern, hive_partitioning=True)
-    if columns:
-        lf = lf.select(columns)
     if frequencies:
         lf = lf.filter(pl.col("frequency").is_in(frequencies))
     if min_obs > 1:
         lf = lf.filter(pl.col("n_obs") >= min_obs)
+    if columns is not None:
+        lf = lf.select(columns)
     return lf
 
 
@@ -90,12 +96,11 @@ def split(df: pl.DataFrame | pl.LazyFrame, by: str = "dataset_id", holdout: floa
 
     ``by`` is the unit that moves together. In increasing order of safety:
 
-    ``"dataset_id"``   the default. Kills the seasonal-adjustment twins, the unit variants and the
-                       total-versus-parts identities, which all live inside one dataset.
-    ``"group"``        the theme prefix (``nama``, ``apro``, ``OECD.SDD.NAD``). Also separates the
-                       national-accounts identities that span datasets.
-    ``"geo"``          by region. The only one that breaks the geographic aggregation identities,
-                       where a country is the sum of its NUTS regions.
+    ``"dataset_id"``   the default. Keeps within-dataset variants together; cross-dataset copies
+                       and identities still need an audit.
+    ``"group"``        the theme prefix (``nama``, ``apro``, ``OECD.SDD.NAD``). Coarser groups can
+                       reduce related-dataset overlap but do not prove independence.
+    ``"geo"``          by region. Geographic aggregates can still contain held-out regions.
 
     ``by="series_uid"`` is accepted and warned about, because it is the split this corpus is least
     suited to: it is exactly the random split that the duplication makes meaningless.
@@ -103,6 +108,10 @@ def split(df: pl.DataFrame | pl.LazyFrame, by: str = "dataset_id", holdout: floa
     The proportion is approximate — whole groups move, and groups differ in size — so the realised
     share is reported by the caller rather than guaranteed here.
     """
+    if not 0 < holdout < 1:
+        raise ValueError("holdout must lie strictly between 0 and 1")
+    if not isinstance(folds, int) or isinstance(folds, bool) or folds < 2:
+        raise ValueError("folds must be an integer >= 2")
     lf = df.lazy()
     if by == "group":
         from terrastat.hierarchy import group_expr
@@ -127,7 +136,7 @@ def split(df: pl.DataFrame | pl.LazyFrame, by: str = "dataset_id", holdout: floa
             "the realised split may be far off, or empty. Load a wider slice, or split by a "
             "finer key.", n_groups, by, holdout * 100,
         )
-    n_test = max(1, round(folds * holdout))
+    n_test = min(folds - 1, max(1, round(folds * holdout)))
     return out.with_columns(
         pl.when(_bucket(out.get_column(by), folds, seed) < n_test)
         .then(pl.lit("test")).otherwise(pl.lit("train")).alias("fold")
@@ -149,22 +158,31 @@ def split_report(df: pl.DataFrame, by: str = "dataset_id") -> pl.DataFrame:
 # -- windowing ----------------------------------------------------------------------------------
 
 def windows(df: pl.DataFrame, context: int = 48, horizon: int = 12,
-            max_per_series: int = 1, drop_missing: bool = True) -> dict:
+            max_per_series: int = 1, drop_missing: bool = False,
+            max_periods: int = 10_000) -> dict:
     """Cut series into supervised (context, target) pairs, last observations held out.
 
     Returns arrays ready for a model: ``X`` of shape (n, context), ``y`` of (n, horizon), plus the
     ``series_uid`` and ``frequency`` of each row and the in-sample seasonal-naive error used to
-    scale MASE.
+    scale MASE. Sparse dates are expanded before slicing. ``X_mask`` and ``y_mask`` mark
+    observed values; missing entries remain NaN. ``drop_missing=True`` skips whole
+    incomplete windows, never individual periods. Undefined MASE scales are NaN and
+    retained for callers to report coverage. No shared cutoff across series is imposed.
 
     ``max_per_series`` limits how many windows one long series contributes, so a handful of daily
     series with 20,000 points cannot dominate a batch made mostly of annual ones.
     """
+    if any(not isinstance(n, int) or isinstance(n, bool) or n < 1
+           for n in (context, horizon, max_per_series)):
+        raise ValueError("context, horizon and max_per_series must be positive integers")
     need = context + horizon
-    X, Y, uids, freqs, scales = [], [], [], [], []
+    X, Y, uids, freqs, scales, target_dates = [], [], [], [], [], []
     for r in df.iter_rows(named=True):
-        v = np.asarray(r["values"], dtype=np.float64)
-        if drop_missing:
-            v = v[~np.isnan(v)]
+        try:
+            grid = regularize(r["dates"], r["values"], r["frequency"], max_periods)
+        except ValueError as exc:
+            raise ValueError(f"{r['series_uid']}: {exc}") from exc
+        v = grid["values"]
         if v.size < need:
             continue
         m = SEASONALITY.get(r["frequency"], 1)
@@ -174,20 +192,26 @@ def windows(df: pl.DataFrame, context: int = 48, horizon: int = 12,
             if end < need:
                 break
             w = v[end - need:end]
+            if drop_missing and not np.isfinite(w).all():
+                continue
             hist = w[:context]
             # MASE denominator: mean absolute seasonal-naive error inside the context only, so
             # nothing from the target period influences the scale
             d = np.abs(hist[m:] - hist[:-m]) if hist.size > m else np.abs(np.diff(hist))
-            scale = float(np.mean(d)) if d.size else 0.0
-            if not np.isfinite(scale) or scale == 0:
-                continue                      # a flat context makes MASE undefined
+            d = d[np.isfinite(d)]
+            scale = float(np.mean(d)) if d.size else np.nan
+            if scale == 0:
+                scale = np.nan
             X.append(hist); Y.append(w[context:])
             uids.append(r["series_uid"]); freqs.append(r["frequency"]); scales.append(scale)
+            target_dates.append(grid["dates"][end - horizon:end])
     if not X:
         return {"X": np.zeros((0, context)), "y": np.zeros((0, horizon)),
-                "series_uid": [], "frequency": [], "scale": np.zeros(0)}
+                "series_uid": [], "frequency": [], "scale": np.zeros(0), "target_dates": [],
+                "X_mask": np.zeros((0, context), dtype=bool), "y_mask": np.zeros((0, horizon), dtype=bool)}
     return {"X": np.stack(X), "y": np.stack(Y), "series_uid": uids,
-            "frequency": freqs, "scale": np.asarray(scales)}
+            "frequency": freqs, "scale": np.asarray(scales), "target_dates": target_dates,
+            "X_mask": np.isfinite(X), "y_mask": np.isfinite(Y)}
 
 
 # -- baselines and metrics ----------------------------------------------------------------------
@@ -204,7 +228,9 @@ def seasonal_naive(X: np.ndarray, freqs: list[str], horizon: int) -> np.ndarray:
 
 def mase(y_true: np.ndarray, y_pred: np.ndarray, scale: np.ndarray,
          agg: str | None = "median") -> float | np.ndarray:
-    """Absolute error scaled by the in-sample seasonal-naive error. 1.0 = no better than naive.
+    """Absolute error scaled by the in-sample seasonal-naive error.
+
+    1.0 matches the in-sample naive error scale, not necessarily a naive forecast's test error.
 
     Scale-free, so a series in millions of euro and one in percent count equally.
 

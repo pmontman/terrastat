@@ -88,7 +88,7 @@ def test_windows_hold_out_the_end_and_never_leak_the_target_into_the_scale(frame
 
 def test_a_series_too_short_for_one_window_is_dropped(frame):
     short = frame.head(2).with_columns(
-        pl.col("values").list.head(20), pl.lit(20).alias("n_obs"))
+        pl.col("values").list.head(20), pl.col("dates").list.head(20), pl.lit(20).alias("n_obs"))
     assert ds.windows(short, context=48, horizon=12)["X"].shape[0] == 0
 
 
@@ -115,3 +115,60 @@ def test_smape_skips_the_points_where_it_is_undefined():
     y = np.array([[0.0, 2.0]])
     pred = np.array([[0.0, 2.0]])
     assert ds.smape(y, pred) == pytest.approx(0.0)     # the 0/0 point is skipped, not NaN
+
+
+def test_snapshot_loader_excludes_index_and_filters_before_projection(tmp_path, frame):
+    frame.head(3).write_parquet(tmp_path / "shard-00000.parquet")
+    frame.slice(3, 2).write_parquet(tmp_path / "shard-00001.parquet")
+    frame.select("series_uid").write_parquet(tmp_path / "index.parquet")
+    result = ds.load(tmp_path, frequencies=["M"], min_obs=100, columns=["series_uid"]).collect()
+    assert result.shape == (5, 1)
+    assert result["series_uid"].to_list() == frame.head(5)["series_uid"].to_list()
+
+
+def test_regularize_restores_implicit_and_explicit_missing_quarters():
+    grid = ds.regularize([dt.date(2020, 10, 1), dt.date(2020, 1, 1), dt.date(2020, 7, 1)],
+                         [4., 1., None], "Q")
+    np.testing.assert_allclose(grid["values"], [1., np.nan, np.nan, 4.], equal_nan=True)
+    assert grid["dates"] == [dt.date(2020, m, 1) for m in (1, 4, 7, 10)]
+    assert grid["observed"].tolist() == [True, False, False, True]
+
+
+@pytest.mark.parametrize("dates,values,freq,match", [
+    ([dt.date(2020, 1, 1), dt.date(2020, 3, 1)], [1., 2.], "Q", "duplicate"),
+    ([None], [1.], "Q", "calendar dates"),
+    ([dt.date(9999, 1, 1)], [1.], "Q", "sentinel"),
+    ([dt.date(2020, 1, 1)], [float("inf")], "Q", "infinite"),
+    ([dt.date(2020, 1, 1)], [], "Q", "equal lengths"),
+    ([dt.date(2020, 1, 1)], [1.], "H", "unambiguous"),
+    ([dt.date(2020, 1, 1), dt.date(2020, 1, 3)], [1., 2.], "W", "aligned"),
+])
+def test_regularize_rejects_ambiguous_or_corrupt_input(dates, values, freq, match):
+    with pytest.raises(ValueError, match=match):
+        ds.regularize(dates, values, freq)
+
+
+def test_calendar_expansion_is_bounded_before_allocating(monkeypatch):
+    def no_allocation(*args, **kwargs):
+        pytest.fail("attempted allocation before checking the calendar span")
+    monkeypatch.setattr(np, "full", no_allocation)
+    with pytest.raises(ValueError, match="max_periods"):
+        ds.regularize([dt.date(1, 1, 1), dt.date(9998, 1, 1)], [1., 2.], "D", max_periods=1000)
+
+
+def test_windows_preserve_calendar_gaps_and_use_observed_scale_pairs():
+    row = _row("gap", "ds", [1., 2., 3., 5., 6., None, 8., 9.])
+    row["dates"] = [DATES[i] for i in (0, 1, 2, 4, 5, 6, 7, 8)]
+    w = ds.windows(pl.DataFrame([row]), context=7, horizon=2)
+    np.testing.assert_allclose(w["X"][0], [1, 2, 3, np.nan, 5, 6, np.nan], equal_nan=True)
+    np.testing.assert_allclose(w["y"][0], [8, 9])
+    assert w["scale"][0] == 1.
+    assert w["X_mask"][0].tolist() == [True, True, True, False, True, True, False]
+    assert w["target_dates"][0] == DATES[7:9]
+    assert ds.windows(pl.DataFrame([row]), context=7, horizon=2, drop_missing=True)["X"].shape == (0, 7)
+
+
+@pytest.mark.parametrize("kwargs", [{"holdout": 0}, {"holdout": 1}, {"folds": 0}, {"folds": 1}])
+def test_invalid_split_configuration_fails(frame, kwargs):
+    with pytest.raises(ValueError):
+        ds.split(frame, **kwargs)

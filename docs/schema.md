@@ -1,8 +1,11 @@
 # The shape of the data
 
-How `terrastat` is laid out, what each layer is for, and what a series looks like once it gets
-there. Figures are from the corpus as it stands: **1,049,773,453 series, 7,575,538,825 observations**
-across FRED, Eurostat and OECD.
+This page explains the files and columns you will encounter after loading a snapshot or
+downloading data. For your first read, start with the [quick start](../README.md).
+
+The scale figures in this page describe an earlier collected corpus: **1,049,773,453 series,
+7,575,538,825 observations** across FRED, Eurostat and OECD. They are not a count of your local
+snapshot. See the [dated generated report](corpus.md) for the committed corpus measurements.
 
 ## Four layers, each usable while the next is still being built
 
@@ -96,11 +99,17 @@ source asks for.
 |---|---|---|
 | `start_date`, `end_date` | date | |
 | `n_points` | int | length of the lists |
-| `n_obs` | int | non-missing values; `n_points − n_obs` is the gap count |
+| `n_obs` | int | non-missing values; `n_points − n_obs` counts explicit nulls only |
 | `n_flagged` | int | points carrying a status flag |
 | `dates` | list of date | |
 | `values` | list of f64 | `null` where missing |
 | `flags` | list of str | provisional, estimated, break in series, … |
+
+The lists are sparse. Unflagged missing observations may have no stored row, so their absence
+is recovered from the calendar, not from `n_points - n_obs`. Reconstruct interior periods before
+windowing with `terrastat.calendar.regularize(dates, values, frequency, max_periods=10_000)`.
+It retains gaps as NaN and validates the expansion size before allocation. Unsupported or
+ambiguous frequencies require an explicit calendar policy; see [forecasting.md](forecasting.md).
 
 Keeping the fixed-width columns separate from the three list columns is what makes the analysis
 tools cheap: the lists are essentially all of the 30 GB, and Parquet stores columns separately, so

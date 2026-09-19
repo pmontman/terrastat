@@ -1,8 +1,22 @@
-# terrastat, the manual
+# User guide
 
-A step-by-step guide for running the data gathering and using what it produces. The
-[README](README.md) is the technical reference (schemas, licences, design); this document is the
-walkthrough. Everything below was run on the machine this was built on (Windows 10, PowerShell).
+Start with the [README](README.md) to open a snapshot or download your first dataset. This
+guide covers the next steps: choosing data, running a larger collection, reading the files,
+and preparing a dataset for an experiment. The [technical reference](docs/reference.md)
+keeps the detailed storage and source notes.
+
+| What do you need? | Where to go |
+|---|---|
+| Find a dataset and download it | [Catalogue](#catalog-the-list-of-all-tables), [fetch](#fetch-the-crawl), and [recipes](#4-recipes) |
+| Understand the files | [Reading the data](#6-reading-the-data) and [schema](docs/schema.md) |
+| Stop or resume a download | [Recovery](#5-stopping-resuming-failures) |
+| Prepare a snapshot | [Export](#6b-a-snapshot-for-training-export) |
+| Explore or train a model | [Notebooks](#6c-the-notebooks) |
+| Cite or share the data | [Licensing and citation](docs/licensing.md) |
+| Check whether existing data will update | [Refresh behavior](docs/refresh.md) |
+
+The detailed examples below use Windows PowerShell. On macOS/Linux replace `.venv\Scripts\`
+with `.venv/bin/`, or use `uv run --no-sync terrastat` from the repository root on any platform.
 
 ## 1. What you are operating
 
@@ -22,7 +36,7 @@ Frequency codes used everywhere, finest to coarsest: `H` hourly, `D` daily, `B` 
 days only, `W` weekly, `BW` biweekly, `M` monthly, `Q` quarterly, `S` semiannual, `A` annual,
 `A3` the source's own "triannual" bucket, `P` pluriannual (any fixed multi-year step, such as
 FRED's 5 Year), `I` irregular, `OTHER` when the source declares no applicable frequency. The
-source's own label is always kept alongside, in `frequency_raw`. See the README for the full
+source's own label is always kept alongside, in `frequency_raw`. See the technical reference for the full
 mapping table.
 
 ## 2. Opening a terminal in the right place
@@ -61,10 +75,9 @@ terrastat --help
 ```
 
 You will see `(terrastat)` at the start of the prompt while it is active. It lasts until you close
-the window. On this machine PowerShell currently answers "running scripts is disabled on this
-system": that is Windows' default execution policy for scripts, and it blocks Way B. Either stay
-with Way A, which needs no script, or allow locally written scripts once and for all by running
-this in PowerShell (it changes a setting for your user account only):
+the window. If PowerShell reports "running scripts is disabled on this system", use Way A
+or `uv run --no-sync terrastat` without activation. If you prefer to allow local activation
+scripts, the following command changes the execution policy for your Windows account:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
@@ -100,7 +113,7 @@ Otherwise go through the interpreter, which needs no `Scripts` directory on PATH
 
 The examples below use the short form; both accept exactly the same arguments.
 
-### `run`, the only one you need for a full crawl
+### `run`: collect all sources
 
 ```powershell
 terrastat run
@@ -126,7 +139,8 @@ window open; the three progress bars show where each source is. What to expect:
 - It is done when the last lines say `0 remaining` for every source. Running it again then does
   nothing (except picking up datasets the sources have added since).
 
-Everything below is what `run` uses internally; you need it only for partial or custom crawls.
+The commands below let you choose individual datasets and inspect each stage. For a first
+experiment, a targeted `fetch` is usually enough; you do not need a full crawl.
 
 ### `catalog`, the list of all tables
 
@@ -160,7 +174,7 @@ The options you will actually use:
 | `--limit 50` | stop after 50 new datasets |
 | `--max-values N` | skip datasets larger than N stored values (Eurostat, size known up front) |
 | `--retry-failed` | try again the datasets that failed before |
-| `--force` | redo datasets already done |
+| `--force` | reprocess datasets already done; cached raw data can still be reused |
 | `--min-interval 5 --max-per-minute 6` | be even slower than the defaults |
 
 The progress bar shows the dataset being processed. Each finished dataset is recorded at once,
@@ -335,24 +349,20 @@ order; `values` can hold a null where the source published only a flag.
 
 ## 6b. A snapshot for training: `export`
 
-> **Read this before sharing anything.** The corpus is not uniformly redistributable. Eurostat
-> and OECD data may be shared with acknowledgement; FRED is a mixture, and only the series it
-> marks public domain *and* whose originating body is a US federal one are free of copyright.
-> The rest belong to the agencies that produced them.
->
-> **Always pass `--public-only` for anything that will leave your machine.** It keeps Eurostat,
-> OECD, and the FRED public-domain-from-US-federal subset, and writes `ATTRIBUTIONS.md` with the
-> citations those sources require. Without it, `export` prints a warning naming every licence it
-> included — but the filter is what makes the snapshot safe, not the warning.
->
-> Attribution is required even for the shareable subset. The exact wording sits in the
-> `attribution` column of every row, so it survives slicing, joining and re-export.
+An export packages local data for an experiment or replication archive. Use a new name for
+each release: exporting to an existing name replaces its shards.
+
+For data you intend to share, start with `--public-only` and review the
+[licensing and citation guide](docs/licensing.md). The flag selects Eurostat, OECD and the
+FRED subset marked public domain with a US federal origin. It does not resolve dataset-specific
+exceptions or service restrictions. Keep `ATTRIBUTIONS.md` and the per-series `attribution`
+with any data you are permitted to distribute.
 
 ```powershell
 terrastat export public_v1 --public-only --min-obs 24 --target-mb 128
 ```
 
-Every snapshot folder is publishable as it stands:
+The snapshot folder contains both the data and documentation for the selection:
 
 | file | what it is |
 |---|---|
@@ -363,7 +373,8 @@ Every snapshot folder is publishable as it stands:
 | `manifest.json` | filters, seed, counts |
 | `croissant.json` | [MLCommons Croissant](https://mlcommons.org/croissant/) metadata, validated against `mlcroissant`; Hugging Face, Kaggle and OpenML read it directly |
 
-Use `--per-dataset N` rather than `--limit-rows` for a representative subset: `--limit-rows`
+Use `--per-dataset N` to spread a sample across datasets. This is not a guarantee of statistical
+representativeness. `--limit-rows`
 truncates in catalogue order, and a 400,000-row limit once produced a "starter" set that was
 entirely Eurostat annual series.
 
@@ -609,11 +620,14 @@ always filter on length before quoting a total.
 
 ## 6c. The notebooks
 
-Three notebooks live in `notebooks\`, all saved with their outputs:
+The notebooks live in `notebooks\`:
 `parquet_basics.ipynb` is a gentle introduction to one dataset and to the Parquet format itself,
 `getting_started.ipynb` runs the whole process on a few small datasets, and
 `quality_check.ipynb` is the interactive form of `terrastat quality` — same functions, so the
-notebook and the batch script cannot drift apart. To open them:
+notebook and the batch script cannot drift apart. `showcase.ipynb` explores selected series in
+plots. `quarterly_forecasting.ipynb` trains a small shared residual model on CPU and compares
+it with ETS and seasonal naive using calendar holdouts. Install `.[notebook,forecast]` for
+that tutorial. To open the notebooks:
 
 ```powershell
 .\.venv\Scripts\jupyter lab
@@ -664,21 +678,19 @@ docstring has the table of the three differences.
 
 Every dataset and every series row says under which terms it came: `license_id`, the source's
 page (`license_url`), the exact citation the source asks for (`attribution`) and the caveats
-(`license_notes`). Eurostat and OECD allow re-use, including commercial, with attribution.
-FRED reports a status per series; the public snapshot to aim for is the rows with
-`license_id = fred-public-domain-citation-requested` **and** `origin_us_federal = true`, because
-FRED's own terms restrict archiving and machine-learning use of what comes through FRED, while
-US federal data is public domain at its origin. The README's "Licences" section has the details.
+(`license_notes`). These fields help you find and retain the applicable conditions; they do
+not replace the provider's terms. See [licensing and citation](docs/licensing.md) for the
+provider links, the meaning of `--public-only`, and what to include in a research archive.
 
 ## 8. When something looks wrong
 
 | symptom | cause and fix |
 |---|---|
 | `terrastat` is "not recognized" | you are not in the project folder, or the environment is not activated; use `.\.venv\Scripts\terrastat` |
-| "running scripts is disabled" on activation | PowerShell execution policy; start `powershell -ExecutionPolicy Bypass`, or use Way A |
+| "running scripts is disabled" on activation | use `uv run --no-sync terrastat` or the direct executable path; activation is optional |
 | `FRED_API_KEY is not set` | put `FRED_API_KEY=...` in `terrastat\.env` (see `.env.example`) |
 | many `HTTP 429` or `503` lines in the log | the source is throttling; the tool already waits and retries, let it run, or pass `--min-interval 6` |
 | a dataset keeps failing with `413` or a timeout | too big for one request; skip it for now |
 | disk filling up | raw payloads are kept by default; `--no-raw` deletes them after tidying, or set `TERRASTAT_DATA_DIR` to a bigger drive in `.env` |
 | strange characters in titles in the console | the console font; the files are UTF-8 and correct |
-| you want to start a source over | delete `data\state\<source>.jsonl` (and the folders under `data\datasets\<source>` if you want them rebuilt) |
+| a rerun did not fetch newer observations | resuming is not refreshing; see [refresh behavior](docs/refresh.md) before changing state or cached files |

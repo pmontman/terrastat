@@ -336,14 +336,17 @@ footer p { margin-bottom: 0.5rem; }
     <div class="steps">
       <div>
         <h3>I want to train something</h3>
-        <p>Load a snapshot, split it without leaking, cut supervised windows. Runs the same against
-        a 28 MB starter set or the full corpus.</p>
-        <pre><span class="c"># pip install terrastat</span>
+        <p>Load a quarterly subset, assign whole datasets to folds, and cut calendar windows.
+        For forecasting, also impose shared chronological cutoffs as shown in the quarterly tutorial.</p>
+        <pre><span class="c"># From a checkout: pip install -e ".[notebook,forecast]"</span>
+import polars as pl
 from terrastat import dataset
 
-lf = dataset.load(<span class="c">"starter"</span>)
-train, test = dataset.split(lf, by=<span class="c">"dataset_id"</span>)
-X, y = dataset.windows(train, horizon=<span class="c">18</span>)</pre>
+lf = dataset.load(<span class="c">"starter"</span>, frequencies=[<span class="c">"Q"</span>])
+folds = dataset.split(lf, by=<span class="c">"dataset_id"</span>)
+train = folds.filter(pl.col(<span class="c">"fold"</span>) == <span class="c">"train"</span>)
+batch = dataset.windows(train, context=<span class="c">24</span>, horizon=<span class="c">4</span>)
+X, y = batch[<span class="c">"X"</span>], batch[<span class="c">"y"</span>]  <span class="c"># missing entries remain NaN</span></pre>
         <p>The payload is plain Parquet plus a checksummed manifest — readable with polars,
         pandas, DuckDB or Hugging Face <code>datasets</code>, with nothing of ours installed. The
         public snapshot is still being prepared; until it lands,

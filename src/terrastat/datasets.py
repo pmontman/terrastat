@@ -194,14 +194,9 @@ def load(name_or_url: str = "starter", cache: Path | str | None = None,
                 raise FileNotFoundError(f"{out} holds no shards and download=False")
             out = fetch(name_or_url, cache=cache)
 
-    lf = pl.scan_parquet(str(out / "shard-*.parquet"))
-    if columns:
-        lf = lf.select(columns)
-    if frequencies:
-        lf = lf.filter(pl.col("frequency").is_in(frequencies))
-    if min_obs > 1:
-        lf = lf.filter(pl.col("n_obs") >= min_obs)
-    return lf
+    from terrastat.dataset import load as load_local
+
+    return load_local(out, frequencies=frequencies, min_obs=min_obs, columns=columns)
 
 
 def verify(directory: Path | str) -> dict:

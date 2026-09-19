@@ -25,7 +25,7 @@ any exported snapshot:
     attribution         the exact citation that source asks for
     license_notes       caveats
     origin_agencies     who actually produced the numbers
-    origin_us_federal   whether a US federal body did, which decides copyright
+    origin_us_federal   a heuristic indicating a US federal originating body
 
 In outline, as verified in September 2026:
 
@@ -38,18 +38,17 @@ In outline, as verified in September 2026:
              data within OECD datasets is excepted and may carry other terms.
              https://www.oecd.org/en/about/terms-conditions.html
 
-  FRED       A mixture, and the one that needs care. Series FRED marks
-             "Public Domain: Citation Requested" whose originating body is a US
-             federal one carry no copyright of their own (17 U.S.C. 105).
-             Everything else is copyrighted by the agency that produced it and
-             may not be redistributable. FRED itself republishes OECD, World
-             Bank, IMF, BIS and Eurostat series, which keep their own terms.
+  FRED       Check both the originating provider's rights and FRED's service/API
+             terms. These include restrictions on machine-learning use and
+             API-based storage/archiving. A public-domain label or federal-origin
+             flag does not override those terms. Third-party data retains the
+             originating provider's requirements.
              https://fred.stlouisfed.org/legal/
 
-`terrastat export --public-only` selects the subset that may be redistributed and
-writes an ATTRIBUTIONS.md beside it with the citations those sources require.
-Without that flag, the export prints a warning naming every licence included —
-but the filter, not the warning, is what makes a snapshot safe to publish.
+`terrastat export --public-only` applies an initial metadata-based licence filter
+and writes an ATTRIBUTIONS.md beside the export. It does not certify permission
+for every series or intended use. Dataset-specific exceptions and service terms
+still apply. See docs/licensing.md for practical citation and sharing guidance.
 
 Determining whether a particular use is permitted remains the responsibility of
 whoever publishes the data. Nothing here is legal advice.

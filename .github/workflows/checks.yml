@@ -41,3 +41,23 @@ jobs:
       - run: pip install -e .
       - name: docs/index.html and docs/corpus.md match docs/corpus_tables.json
         run: terrastat corpus --check
+
+  quarterly-notebook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU training and notebook dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[notebook,forecast]"
+      - name: Execute the tutorial offline with labeled synthetic data
+        env:
+          TERRASTAT_TUTORIAL_SMOKE: "1"
+        run: |
+          mkdir -p reports
+          python -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=180 --output-dir=reports --output=quarterly-smoke.ipynb notebooks/quarterly_forecasting.ipynb

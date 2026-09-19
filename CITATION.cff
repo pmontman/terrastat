@@ -9,12 +9,9 @@ type: software
 authors:
   - family-names: Rosales Saiz
     given-names: Iker
-    # affiliation: ""                                # fill in
-    # orcid: "https://orcid.org/0000-0000-0000-0000" # fill in
   - family-names: Montero-Manso
     given-names: Pablo
     affiliation: University of Sydney
-    # orcid: "https://orcid.org/0000-0000-0000-0000"   # fill in
 repository-code: "https://github.com/pmontman/terrastat"
 license: Apache-2.0
 version: 0.1.0

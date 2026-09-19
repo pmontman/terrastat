@@ -126,6 +126,15 @@ def test_offline_mode_refuses_to_reach_the_network(tmp_path):
         datasets.load("http://127.0.0.1:1/nothing/", cache=tmp_path, download=False)
 
 
+def test_local_snapshot_projection_keeps_filter_columns_available(tmp_path):
+    frame = pl.DataFrame({"series_uid": ["q", "m"], "frequency": ["Q", "M"], "n_obs": [60, 60],
+                          "values": [[1.], [2.]]}).with_columns(pl.col("values").cast(pl.List(pl.Float32)))
+    frame.write_parquet(tmp_path / "shard-00000.parquet")
+    frame.select("series_uid").write_parquet(tmp_path / "index.parquet")
+    out = datasets.load(str(tmp_path), frequencies=["Q"], min_obs=60, columns=["series_uid"], download=False).collect()
+    assert out.to_dicts() == [{"series_uid": "q"}]
+
+
 def test_an_unknown_name_says_what_to_do_instead():
     with pytest.raises(KeyError) as e:
         datasets.fetch("does-not-exist")
