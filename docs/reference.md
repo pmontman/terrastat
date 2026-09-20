@@ -3,6 +3,7 @@
 Start with the [quick start](../README.md) if you want to load data or run your first experiment.
 This page retains the detailed command, storage, source and operational notes from the longer README.
 Use [the manual](../MANUAL.md) for task-based recipes.
+For compressed archives, restoration and storage tradeoffs, see [storage and deployment](storage.md).
 
 Polite, resumable gathering of public economic time series (FRED, Eurostat, OECD) into a tidy,
 licence-aware Parquet database, with a model-ready "one row per series" view on top.

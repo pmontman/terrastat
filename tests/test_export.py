@@ -2,6 +2,8 @@ import datetime as dt
 import json
 
 import polars as pl
+import pyarrow.parquet as pq
+import pytest
 
 from terrastat.series import SERIES_SCHEMA
 
@@ -88,3 +90,37 @@ def test_the_licensing_notice_is_loud_when_no_filter_was_applied():
     assert "REDISTRIBUTABLE SUBSET" in text
     # even the shareable subset still requires attribution, and says so
     assert "attribution" in text.lower()
+
+
+def test_storage_layout_changes_preserve_shuffled_rows_index_and_missing_values(tmp_path, monkeypatch):
+    from terrastat.export import export_shards
+    from terrastat.datasets import verify
+
+    monkeypatch.setenv("TERRASTAT_DATA_DIR", str(tmp_path))
+    source = tmp_path / "series/eurostat/freq=M/ds.parquet"
+    source.parent.mkdir(parents=True)
+    frame = _fake_series(120, "eurostat", "ds", "eurostat-reuse", None)
+    frame = frame.with_columns(pl.lit([1., None, float("nan"), -0.]).alias("values"))
+    frame.write_parquet(source)
+    for name, rows, level in [("small", 16, 3), ("compact", 128, 9)]:
+        result = export_shards(name, seed=7, row_group_rows=rows, compression_level=level)
+        assert result["parquet"]["row_group_rows"] == rows
+        assert verify(tmp_path / "snapshot" / name)["complete"]
+    a, b = [tmp_path / "snapshot" / name for name in ("small", "compact")]
+    assert pl.read_parquet(a / "shard-00000.parquet").equals(pl.read_parquet(b / "shard-00000.parquet"))
+    assert pl.read_parquet(a / "index.parquet").equals(pl.read_parquet(b / "index.parquet"))
+    assert pq.ParquetFile(a / "shard-00000.parquet").num_row_groups > pq.ParquetFile(b / "shard-00000.parquet").num_row_groups
+
+
+@pytest.mark.parametrize("options", [{"row_group_rows": 0}, {"row_group_rows": -1},
+                                    {"compression_level": 0}, {"compression_level": 23}])
+def test_invalid_storage_settings_fail_before_export_changes_any_files(tmp_path, monkeypatch, options):
+    from terrastat.export import export_shards
+
+    monkeypatch.setenv("TERRASTAT_DATA_DIR", str(tmp_path))
+    target = tmp_path / "snapshot/existing/shard-00000.parquet"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original")
+    with pytest.raises(ValueError):
+        export_shards("existing", **options)
+    assert target.read_bytes() == b"original"

@@ -163,8 +163,45 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--columns", nargs="*", default=None, help="subset of series columns to keep")
     ex.add_argument("--limit-rows", type=int, default=None, help="for tests: stop after this many series (truncates in catalogue order, so not a sample)")
     ex.add_argument("--per-dataset", type=int, default=None, help="sample at most this many series from each dataset; use this, not --limit-rows, for a representative subset")
+    ex.add_argument("--row-group-rows", type=int, default=2048, help="rows per Parquet row group; larger groups may save space but increase read buffers")
+    ex.add_argument("--compression-level", type=int, choices=range(1, 23), default=3, help="Zstd level for final shards (default 3)")
+
+    pk = sub.add_parser("pack", help="archive a stopped data directory as tar.zst, preserving every file's bytes")
+    pk.add_argument("directory", help="existing snapshot or data subtree to archive")
+    pk.add_argument("output", help="new archive filename, outside the input directory")
+
+    dp = sub.add_parser("deploy", help="verify and unfold a tar.zst archive into a new data directory")
+    dp.add_argument("archive", help="local archive or HTTP(S) URL")
+    dp.add_argument("destination", help="new directory; existing directories are never overwritten")
+    dp.add_argument("--sha256", help="archive SHA-256 from pack; required for a URL")
+    dp.add_argument("--cache", help="directory for downloaded archives")
+    dp.add_argument("--max-gb", type=float, default=1024.0, help="maximum expanded payload in GiB (default 1024)")
 
     args = p.parse_args(argv)
+    if args.cmd in {"pack", "deploy"}:
+        # Packing data/ must not create a log file inside the directory being archived.
+        import tarfile
+
+        import httpx
+
+        from terrastat import archive, datasets
+
+        try:
+            if args.cmd == "pack":
+                print(json.dumps(archive.pack(args.directory, args.output), indent=2))
+            else:
+                import math
+
+                if not math.isfinite(args.max_gb) or args.max_gb < 0:
+                    raise ValueError("--max-gb must be finite and nonnegative")
+                out = datasets.deploy(args.archive, args.destination, sha256=args.sha256,
+                                      cache=args.cache, max_bytes=int(args.max_gb * (1 << 30)))
+                print(f"Deployed and verified: {out}")
+        except httpx.HTTPError:
+            p.exit(1, "deploy: archive download failed; check the URL and access permissions\n")
+        except (OSError, ValueError, EOFError, tarfile.TarError) as exc:
+            p.exit(1, f"{args.cmd}: {exc}\n")
+        return 0
     _setup_logging(args.verbose, quiet_console=(args.cmd == "run"))
     from terrastat import pipeline
 
@@ -375,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             columns=args.columns,
             limit_rows=args.limit_rows,
             per_file_cap=args.per_dataset,
+            row_group_rows=args.row_group_rows,
+            compression_level=args.compression_level,
         )
         print(json.dumps({k: m[k] for k in ("name", "n_shards", "rows", "bytes", "counts")}, indent=2))
         print(m["licensing_notice"])

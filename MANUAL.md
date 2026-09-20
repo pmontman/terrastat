@@ -11,6 +11,7 @@ keeps the detailed storage and source notes.
 | Understand the files | [Reading the data](#6-reading-the-data) and [schema](docs/schema.md) |
 | Stop or resume a download | [Recovery](#5-stopping-resuming-failures) |
 | Prepare a snapshot | [Export](#6b-a-snapshot-for-training-export) |
+| Use a saved normalized release, online or downloaded manually | [Saved-data deployment](docs/deployment.md) |
 | Explore or train a model | [Notebooks](#6c-the-notebooks) |
 | Cite or share the data | [Licensing and citation](docs/licensing.md) |
 | Check whether existing data will update | [Refresh behavior](docs/refresh.md) |
@@ -385,6 +386,14 @@ A training loop reads one shard at a time, so memory stays flat on a laptop. Opt
 `--sources fred eurostat`, `--freq M`, `--license-ids ...`, `--target-mb`, `--seed`,
 `--float64`, `--columns` (keep only some columns). The notebook in `notebooks\` shows how to
 iterate the shards into batches.
+
+### Archive a snapshot and deploy it elsewhere
+
+`terrastat pack data/snapshot/starter reports/archives/starter-v1.tar.zst` preserves an existing
+snapshot, including its index and documentation. Restore it into a new directory with
+`terrastat deploy reports/archives/starter-v1.tar.zst data/snapshot/starter-restored`.
+Neither command removes the original. The [storage and deployment guide](docs/storage.md) covers
+checksums, online delivery, measured savings and rebuilding derived layers from normalized data.
 
 ## 6b0. The one page to read first: `corpus`
 

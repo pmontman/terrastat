@@ -53,7 +53,14 @@ sample.select("series_uid", "title", "units", "n_obs")
 `starter` refers to your local snapshot; it is not an automatic download. You can also pass
 an existing snapshot directory to `dataset.load`. Reading it does not change its files.
 
-### I need to download data
+### I have a saved normalized release
+
+You can start from normalized data shared online or from archives downloaded manually.
+The [saved-data deployment walkthrough](docs/deployment.md) covers both routes: restore the
+observations and reference metadata, rebuild the series view offline, then read it in Python.
+No official download URL is configured yet; use the URLs or files supplied with your release.
+
+### I need to download data from the providers
 
 Start with quarterly unemployment from Eurostat:
 
@@ -138,6 +145,8 @@ The [sharing recipe](MANUAL.md#6b-a-snapshot-for-training-export) explains the e
 | Understand columns, flags and file layout | [Schema](docs/schema.md) |
 | Design a forecasting evaluation | [Experiment notes](docs/forecasting.md) and [leakage guide](docs/leakage.md) |
 | Know whether a rerun gets new data | [Refresh behavior](docs/refresh.md) |
+| Store data compactly, transfer it, or restore an archive | [Storage and deployment](docs/storage.md) |
+| Start from normalized data shared online or downloaded manually | [Saved-data deployment](docs/deployment.md) |
 | Look up commands, source behavior or storage details | [Technical reference](docs/reference.md) |
 | See the collected corpus statistics | [Dated corpus report](docs/corpus.md) |
 | Contribute code or review the design | [Contributing](CONTRIBUTING.md) and [design review](docs/design-review.md) |

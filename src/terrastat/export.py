@@ -93,6 +93,8 @@ def export_shards(
     columns: list[str] | None = None,
     limit_rows: int | None = None,
     per_file_cap: int | None = None,
+    row_group_rows: int = ROW_GROUP_ROWS,
+    compression_level: int = 3,
 ) -> dict:
     """Build ``data/snapshot/<name>/``. Returns the manifest.
 
@@ -103,6 +105,10 @@ def export_shards(
     spreads the result across sources, frequencies and subjects. Use it for anything meant to be
     representative.
     """
+    if type(row_group_rows) is not int or row_group_rows < 1:
+        raise ValueError("row_group_rows must be a positive integer")
+    if type(compression_level) is not int or not 1 <= compression_level <= 22:
+        raise ValueError("compression_level must be an integer from 1 to 22")
     files = _input_files(sources, freqs)
     if not files:
         raise RuntimeError("no series files found; run `terrastat series <source>` first")
@@ -179,7 +185,8 @@ def export_shards(
         df = pl.read_parquet(tmp).sample(fraction=1.0, shuffle=True, seed=seed + sid)
         tmp.unlink()
         path = out / f"shard-{sid:05d}.parquet"
-        df.write_parquet(path, compression="zstd", row_group_size=ROW_GROUP_ROWS, statistics=True)
+        df.write_parquet(path, compression="zstd", compression_level=compression_level,
+                         row_group_size=row_group_rows, statistics=True)
         # sha256 per shard, so *any* client can verify a download -- not only ours. Without it a
         # truncated or corrupted transfer is indistinguishable from a short shard.
         shards_meta.append({"file": path.name, "rows": df.height,
@@ -201,6 +208,8 @@ def export_shards(
         "seed": seed,
         "float32_values": float32,
         "target_mb": target_mb,
+        "parquet": {"compression": "zstd", "compression_level": compression_level,
+                    "row_group_rows": row_group_rows},
         "n_shards": len(shards_meta),
         "rows": int(index.height),
         "bytes": int(sum(s["bytes"] for s in shards_meta)),

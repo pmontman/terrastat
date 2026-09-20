@@ -23,9 +23,10 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 import polars as pl
@@ -57,12 +58,16 @@ def cache_dir() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "terrastat"
 
 
-def sha256(path: Path) -> str:
+def _file_sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
         for block in iter(lambda: fh.read(CHUNK), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def sha256(path: Path) -> str:
+    return _file_sha256(path)
 
 
 def _resolve(name_or_url: str) -> str:
@@ -215,6 +220,38 @@ def verify(directory: Path | str) -> dict:
             ok.append(e["file"])
     return {"ok": ok, "corrupt": bad, "missing": missing,
             "complete": not bad and not missing, "rows": manifest.get("rows")}
+
+
+def deploy(archive_or_url: Path | str, destination: Path | str, *,
+           sha256: str | None = None, cache: Path | str | None = None,
+           max_bytes: int = 1 << 40) -> Path:
+    """Restore a packed data directory, optionally downloading it from HTTP(S).
+
+    Remote archives require the SHA-256 printed by ``terrastat pack``. Downloads
+    resume in a content-addressed cache; a verified cached archive is reused.
+    The destination must be new. Originals and cached archives are retained.
+    ``max_bytes`` bounds the expanded payload, not the compressed download.
+    """
+    from terrastat import archive
+
+    source = str(archive_or_url)
+    if Path(destination).exists() or Path(destination).is_symlink():
+        raise FileExistsError(f"Destination already exists: {destination}")
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
+    if "://" not in source:
+        return archive.deploy(source, destination, sha256=sha256, max_bytes=max_bytes)
+    if urlsplit(source).scheme not in {"https", "http"}:
+        raise ValueError("Archive URLs must use HTTP or HTTPS")
+    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+        raise ValueError("Remote deployment requires the archive's 64-character SHA-256")
+    digest = sha256.lower()
+    root = Path(cache) if cache is not None else cache_dir() / "archives"
+    local = root / f"{digest}.tar.zst"
+    if not local.is_file() or _file_sha256(local) != digest:
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            _download(client, source, local, expect_sha=digest, desc="archive")
+    return archive.deploy(local, destination, sha256=digest, max_bytes=max_bytes)
 
 
 def clear(name: str | None = None, cache: Path | str | None = None) -> None:
