@@ -1,5 +1,6 @@
 """The generated project page: same numbers as the annex, and readable in either theme."""
 import datetime as dt
+import html as html_lib
 import re
 
 import polars as pl
@@ -12,6 +13,11 @@ from tests.test_corpus import corpus_root  # noqa: F401  (the miniature corpus f
 @pytest.fixture
 def tables(corpus_root):  # noqa: F811
     return corpus.compute()
+
+
+def _text(markup):
+    """Visible text with normalised whitespace, independent of line wrapping and inline tags."""
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", markup)).split())
 
 
 def test_standalone_is_a_whole_document_and_the_fragment_is_not(tables):
@@ -43,13 +49,17 @@ def test_both_theme_overrides_are_present_and_guarded(tables):
 
 
 def test_exact_and_sampled_rows_are_marked_as_such(tables):
-    """The one distinction the page is built around: a sampled share must never be readable as a
-    population count. It is carried by a class, not only by prose."""
+    """Full-collection counts and descriptive sample diagnostics remain distinguishable."""
     html = site.render(tables, standalone=False)
     assert 'class="exact"' in html and 'class="sampled"' in html
-    assert "exact, over every series" in html and "estimated from a sample" in html
-    # the sampled table says so in its own caption too
-    assert "Estimated from" in html
+    assert "full-collection summaries" in html and "descriptive sample diagnostics" in html
+    caption = _text(site._value_table(tables["values"]))
+    assert "Descriptive sample" in caption
+    assert "include all sampled rows" in caption
+    assert "remaining columns use only rows with at least two observed values" in caption
+    notes = _text(html[html.index('id="values"'):html.index('id="concentration"')])
+    assert "first rows" in notes and "not weighted by dataset size" in notes
+    assert "not population estimates" in notes
 
 
 def test_the_figures_match_the_tables_they_came_from(tables):
@@ -84,8 +94,10 @@ def test_the_licence_band_is_present_and_names_the_restriction(tables):
     """The user asked for data permissions to be impossible to miss. FRED's restriction on
     archiving and ML use is the one that actually bites, so it must be stated, not implied."""
     html = site.render(tables, standalone=False)
-    assert "The code is Apache-2.0. The data is not." in html
+    assert "Apache-2.0" in html
     assert "machine-learning use" in html and "--public-only" in html
+    assert "does not certify permission" in _text(html)
+    assert "does not override service terms" in _text(html)
     assert "Not affiliated with" in html
 
 
@@ -96,7 +108,8 @@ def test_it_links_back_to_the_repository(tables):
 
 def test_nothing_unformatted_leaks_into_the_output(tables):
     html = site.render(tables, standalone=True)
-    assert ">None<" not in html and "nan" not in html.lower().split("<style>")[0]
+    assert ">None<" not in html
+    assert not re.search(r"\bnan\b", html.split("<style>")[0], flags=re.IGNORECASE)
     assert "{" not in html.split("<style>")[0]                # no stray f-string braces in markup
 
 
@@ -108,7 +121,7 @@ def test_writing_it_produces_a_file(tables, tmp_path):
 def test_the_command_writes_both_the_page_and_the_annex(corpus_root, tmp_path):  # noqa: F811
     md, page = tmp_path / "corpus.md", tmp_path / "index.html"
     assert corpus.main(["--out", str(md), "--html", str(page)]) == 0
-    assert md.read_text(encoding="utf-8").startswith("# The corpus at a glance")
+    assert md.read_text(encoding="utf-8").startswith("# Corpus statistics")
     assert "<!doctype html>" in page.read_text(encoding="utf-8")
 
 
@@ -121,7 +134,7 @@ def test_no_html_skips_the_page(corpus_root, tmp_path):  # noqa: F811
 def test_it_still_renders_when_the_expensive_passes_are_skipped(corpus_root):  # noqa: F811
     t = corpus.compute(values=False, concentration=False)
     html = site.render(t, standalone=False)
-    assert "How much data is in it" in html
+    assert 'id="corpus"' in html
     assert 'class="exact"' in html
 
 
@@ -226,30 +239,28 @@ def test_the_headline_figures_need_no_glossary(tables):
     html = site.render(tables, standalone=False)
     band = html[html.index('class="figures"'): html.index('class="legend"')]
     assert "effective" not in band and "perplexity" not in band
-    assert "series in total" in band and "observations in total" in band
+    assert "stored series entries" in band and "non-null observations" in band
     assert band.count('class="v"') == 6
     # and it is still explained where it does appear
     assert "perplexity" in html
 
 
-def test_the_lede_says_what_the_licence_columns_buy_you(tables):
-    """The thing practitioners actually value here is not that licences are recorded but that
-    acting on them is a filter rather than an afternoon of reading."""
+def test_the_lede_describes_data_and_metadata_without_guaranteeing_permissions(tables):
+    """Metadata supports research and permission checks; it does not confer data rights."""
     html = site.render(tables, standalone=False)
     lede = html[html.index('class="lede"'): html.index('class="status"')]
-    assert "licence" in lede and "one-line filter" in lede
-    assert "train and evaluate models" in lede
+    assert "licence metadata" in lede and "provenance" in lede
+    assert "Parquet" in lede
+    assert "one-line filter" not in html and "Licences are sorted out" not in html
 
 
 def test_the_sections_run_corpus_then_python_then_the_rest(tables):
     """Size and length, then the code, then everything else. The two deep-dive tables are worth
     having and are not what a reader needs before they can try it."""
     html = site.render(tables, standalone=False)
-    order = [html.index(f'id="{name}"') for name in ("corpus", "start", "what", "licence")]
+    order = [html.index(f'id="{name}"') for name in
+             ("corpus", "start", "schema", "values", "concentration", "what", "licence")]
     assert order == sorted(order)
-    assert html.index("How much data is in it") < html.index("<section id=\"start\"")
-    assert html.index("What the values look like") > html.index("<section id=\"start\"")
-    assert html.index("How concentrated it is") > html.index("<section id=\"start\"")
     nav = html[html.index("<nav>"): html.index("</nav>")]
     assert nav.index("#corpus") < nav.index("#start") < nav.index("#what")
 
@@ -276,20 +287,23 @@ def test_the_length_columns_say_what_they_measure(tables):
     """`p5 / median / p95` over three bare columns does not say *of what*, and the one reading that
     must not happen is "number of series"."""
     html = site.render(tables, standalone=False)
-    assert "how long one series is, in observations" in html
-    assert "shortest 5%" in html and "longest 5%" in html
+    assert "observations per eligible series" in html
+    assert "5th percentile" in html and "95th percentile" in html
+    text = _text(html)
+    assert "Percentiles and year-equivalents refer only to eligible series" in text
+    assert "do not measure elapsed date span" in text
 
 
-def test_recency_is_labelled_in_periods_not_months(tables):
-    """The metric is 12 periods of each series' own frequency, so calling it "12 months" would be
-    wrong for every frequency but monthly -- and an annual series stamped 2025-01-01 is not a year
-    stale on 2026-09-08, it is one period old. The figure stays plain; the legend is exact."""
-    html = site.render(tables, standalone=False)
+def test_endpoint_cutoff_is_not_reported_as_publication_status(tables):
+    """The approximate one-sided endpoint lag includes projections and possibly null endpoints."""
+    html = site.render(tables, standalone=False, live_periods=6)
     band = html[html.index('class="figures"'): html.index('class="legend"')]
-    assert "still being published" in band
-    assert "months" not in band and "periods" not in band
-    legend = html[html.index('class="legend"'): html.index("</div>", html.index('class="legend"'))]
-    assert "own frequency" in legend and "periods" in legend
+    assert "endpoint cutoff" in band and "still being published" not in html
+    section = _text(html[html.index('id="corpus"'):html.index('id="start"')])
+    assert "6 periods" in section and "own frequency" in section
+    assert "future-dated endpoints" in section
+    assert "does not verify ongoing publication" in section
+    assert "final stored point has a non-null value" in section
 
 
 # -- the schema section ----------------------------------------------------------------------------
@@ -313,7 +327,8 @@ def test_the_schema_section_names_every_column_and_says_what_each_group_buys(tab
         assert f'<span class="col">{col}</span>' in section, col
     # the claims each group makes, matched case-insensitively: this is prose, not markup
     low = section.lower()
-    for phrase in ("text encoder", "nested geographies", "subset you can share", "vintage"):
+    for phrase in ("text encoder", "nested geographies", "does not certify permission", "vintage",
+                   "absent calendar periods", "does not imply a historical revision archive"):
         assert phrase in low, phrase
     # the data itself is described before the bookkeeping around it
     assert low.index(">the data<") < low.index(">extent<") < low.index(">provenance<")
@@ -321,7 +336,7 @@ def test_the_schema_section_names_every_column_and_says_what_each_group_buys(tab
 
 def test_the_schema_sits_after_the_code_and_before_the_deep_dives(tables):
     html = site.render(tables, standalone=False)
-    assert html.index('id="start"') < html.index('id="schema"') < html.index("What the values look like")
+    assert html.index('id="start"') < html.index('id="schema"') < html.index('id="values"')
 
 
 def test_the_specimen_is_a_real_row_with_a_drawn_series(corpus_root):  # noqa: F811
@@ -358,8 +373,7 @@ def test_a_corpus_with_no_usable_specimen_still_renders(tables):
 
 
 def test_the_specimen_actually_varies(corpus_root):  # noqa: F811
-    """The first row this picked was 192 monthly observations of Austrian hatchery chicks, zero
-    in every month but one: valid data, and an advertisement for nothing. A specimen has to move."""
+    """The illustrative selector applies its requested distinctness threshold."""
     spec = corpus.specimens(min_obs=2, min_unique_share=0.3)
     assert spec.height >= 1
     for r in spec.iter_rows(named=True):
@@ -404,11 +418,14 @@ def test_the_leakage_section_names_the_revision_trap(tables):
     sec = html[html.index('id="leakage"'):]
     sec = sec[: sec.index("</section>")]
     assert "latest vintage" in sec and "real-time" in sec
-    for phrase in ("Publication lag", "Accounting identities", "two sources", "Ill-formed"):
+    for phrase in ("Publication lag", "Accounting identities", "Overlap between sources",
+                   "Repeated or constant values"):
         assert phrase in sec, phrase
-    # the user asked for the framing to be "prone to pitfalls", not a claim about what we withheld
-    assert "prone to leakage" in sec
-    assert "Nothing is cleaned for you" not in sec
+    text = _text(sec)
+    assert "chronological cutoffs" in text
+    assert "does not establish independence" in text
+    assert "Their relevance depends on the task" in text
+    assert "teach a model nothing" not in text and "Ill-formed" not in text
 
 
 def test_leakage_follows_the_schema(tables):

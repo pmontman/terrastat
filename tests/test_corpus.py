@@ -1,4 +1,4 @@
-"""The regenerated one-page corpus summary: exact where it claims to be, sampled where it says so."""
+"""Corpus summaries preserve their scope, denominators and interpretation."""
 import datetime as dt
 import pathlib
 
@@ -6,6 +6,26 @@ import polars as pl
 import pytest
 
 from terrastat import corpus
+
+
+@pytest.mark.parametrize(("value", "digits", "expected"), [
+    (None, 0, "—"),
+    (0, 0, "0"),
+    (10, 0, "10"),
+    (100, 0, "100"),
+    (1000, 0, "1,000"),
+    (-100, 0, "-100"),
+    (None, 2, "—"),
+    (0, 2, "0"),
+    (10, 2, "10"),
+    (1000, 2, "1,000"),
+    (10.5, 2, "10.5"),
+    (10.25, 3, "10.25"),
+    (0.005, 3, "0.005"),
+])
+def test_number_formatting_trims_only_fractional_zeros(value, digits, expected):
+    """Integer trailing zeros carry magnitude; only redundant decimal places may be removed."""
+    assert corpus._num(value, digits) == expected
 
 
 def _write(root, source, freq, dataset, rows):
@@ -100,13 +120,22 @@ def test_a_frequency_with_no_period_is_counted_but_not_judged(corpus_root):
     assert row["n_long"] is None and row["n_live"] is None and row["min_obs"] is None
 
 
-def test_liveness_is_measured_against_the_crawl_not_today(corpus_root):
-    """Left to default to today's date, every series looks stale the moment a crawl finishes --
-    which measures the crawl, not the source."""
+def test_endpoint_lag_defaults_to_the_latest_retrieval(corpus_root):
+    """The default reference date stays tied to the collection, rather than the rendering day."""
     t = corpus.length_table()
     assert t["asof"][0] == dt.date(2026, 9, 5)                     # max retrieved_at, not today
     by = {r["frequency"]: r for r in t.iter_rows(named=True)}
-    assert by["M"]["n_long"] == 5 and by["M"]["n_long_live"] == 4   # the 2015 one is not live
+    assert by["M"]["n_long"] == 5 and by["M"]["n_long_live"] == 4   # 2015 is outside the cutoff
+
+
+def test_endpoint_cutoff_includes_future_dated_records(corpus_root):
+    """The one-sided lag predicate cannot be reported as verified publication activity."""
+    _write(corpus_root, "eurostat", "M", "projection", [
+        (24, dt.date(2100, 1, 1), [float(i) for i in range(24)]),
+    ])
+    m = corpus.length_table().filter(pl.col("frequency") == "M").row(0, named=True)
+    assert m["n_long"] == 6
+    assert m["n_long_live"] == 5
 
 
 def test_length_quantiles_are_exact_and_cover_the_long_cohort_only(corpus_root):
@@ -149,8 +178,7 @@ def test_the_whole_corpus_row_is_recomputed_not_summed(corpus_root):
 # -- sampled table -------------------------------------------------------------------------------
 
 def test_value_statistics_exclude_single_point_series(corpus_root):
-    """With one observation a series has one distinct value, so it is both 100% unique and 100%
-    constant. Leaving the 853 million of them in made every annual number meaningless."""
+    """Short-series prevalence uses all sampled rows; value diagnostics require two observations."""
     v = corpus.value_table()
     a = v.filter(pl.col("frequency") == "A").row(0, named=True)
     assert a["share_one_point"] == pytest.approx(0.5)
@@ -165,13 +193,33 @@ def test_constants_and_signs_are_detected(corpus_root):
     assert 0 < m["unique_share_median"] <= 1
 
 
+def test_value_denominators_exclude_nulls_and_separate_repetition_from_variance(corpus_root):
+    _write(corpus_root, "eurostat", "D", "diagnostics", [
+        (0, dt.date(2026, 8, 1), [None]),
+        (1, dt.date(2026, 8, 1), [-2.0]),
+        (2, dt.date(2026, 8, 1), [1.0, None, 2.0]),
+        (2, dt.date(2026, 8, 1), [3.0, 3.0]),
+        (25, dt.date(2026, 8, 1), [4.0] * 25),
+        (100, dt.date(2026, 8, 1), [-1000.0, 1000.0] * 50),
+    ])
+    d = corpus.value_table(frequencies=["D"]).row(0, named=True)
+    assert d["sampled"] == 6
+    assert d["share_one_point"] == pytest.approx(2 / 6)  # includes the empty row
+    assert d["distinct_median"] == pytest.approx(1.5)   # null is not a third distinct value
+    assert d["unique_share_median"] == pytest.approx(0.27)
+    assert d["share_constant"] == pytest.approx(2 / 4)
+    # Both the long constant and high-amplitude alternating series meet the ratio threshold.
+    assert d["share_near_constant"] == pytest.approx(2 / 4)
+    assert d["share_nonpositive"] == pytest.approx(1 / 4)  # the single negative value is excluded
+
+
 # -- the page ------------------------------------------------------------------------------------
 
 def test_the_page_renders_with_every_section_and_no_placeholders(corpus_root):
     md = corpus.build()
-    for heading in ("# The corpus at a glance", "## Headline", "## Length, by frequency",
-                    "## What the values look like", "## How concentrated it is",
-                    "## Where it came from"):
+    for heading in ("# Corpus statistics", "## Report scope", "## Series counts and observation lengths",
+                    "## Observed-value diagnostics", "## Dataset concentration",
+                    "## Sources and retrieval dates"):
         assert heading in md
     assert "terrastat corpus --out docs/corpus.md" in md
     assert "Do not edit this file" in md
@@ -180,15 +228,20 @@ def test_the_page_renders_with_every_section_and_no_placeholders(corpus_root):
 
 
 def test_the_page_says_what_is_sampled_and_what_is_not(corpus_root):
-    """The single most misquotable thing here is a sampled share read as a population count."""
+    """Distinguish measured full-collection counts from unweighted descriptive diagnostics."""
     md = corpus.build()
-    assert "**Sampled, not exact**" in md
-    assert "Exact, over every series." in md
+    assert "all stored series" in md
+    assert "**Descriptive sample summaries**" in md
+    assert "without sampling weights" in md and "selection within files is not random" in md
+    assert "not representative estimates" in md
+    assert "**all sampled rows**" in md and "`n_obs >= 2`" in md
+    assert "Fewer than 2 observations" in md and "Null values are excluded" in md
+    assert "not a low-variance criterion" in md
 
 
 def test_skipping_the_expensive_passes_still_renders(corpus_root):
     md = corpus.build(values=False, concentration=False)
-    assert "## Length, by frequency" in md
+    assert "## Series counts and observation lengths" in md
     assert "| monthly `M` |" in md
 
 
@@ -198,7 +251,7 @@ def test_the_cli_writes_the_file(corpus_root, tmp_path):
     fixture numbers — which is exactly what happened once."""
     out, page = tmp_path / "docs" / "corpus.md", tmp_path / "docs" / "index.html"
     assert corpus.main(["--out", str(out), "--html", str(page)]) == 0
-    assert out.read_text(encoding="utf-8").startswith("# The corpus at a glance")
+    assert out.read_text(encoding="utf-8").startswith("# Corpus statistics")
     assert page.exists()
 
 

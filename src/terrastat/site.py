@@ -4,10 +4,9 @@
 the repository, and this page for everyone else. Both are generated, so neither can drift from the
 corpus or from each other.
 
-The design carries one idea: **every figure here is either exact over the whole population or
-estimated from a sample, and you must always be able to tell which.** Exact figures are set in the
-accent blue, sampled ones in ochre, and the legend says so. It is the one distinction that decides
-whether a number can be quoted, so it gets the colour system rather than a footnote.
+The page distinguishes full-collection summaries from descriptive sample diagnostics.
+Captions document eligibility, denominators and limitations; colour is an additional cue.
+Stored report dates are retained when wording is regenerated without recomputing the data.
 
 Two outputs from one template. ``standalone=True`` emits a complete document, which is what
 ``docs/index.html`` needs to work as a file and as a GitHub Pages site. ``standalone=False`` emits
@@ -23,7 +22,7 @@ from pathlib import Path
 
 import polars as pl
 
-from terrastat.corpus import (FREQ_NAME, LIVE_PERIODS, MIN_YEARS, _fixed, _n, _num,
+from terrastat.corpus import (FREQ_NAME, LIVE_PERIODS, MIN_YEARS, min_obs, _fixed, _n, _num,
                              _order, _pct)
 from terrastat.logo import (BRAND_README, HEIGHT, WIDTH, animation_script, brand_kit,
                             favicon_svg, globe_svg, mark_svg)
@@ -44,12 +43,12 @@ AUTHOR = "Iker Rosales Saiz and Pablo Montero-Manso"
 # leaving a column undescribed.
 SCHEMA_FAMILIES = [
     ("identity", "keys",
-     "The key for a series, and the table it came from. The dataset id is what you group on when "
-     "splitting.",
+     "Series and dataset identifiers support joins, provenance checks and grouped evaluation. "
+     "Dataset grouping alone does not establish independence between training and test data.",
      ["series_uid", "source", "source_id", "dataset_id"]),
     ("human-readable", "text",
-     "A description per series, built from all the metadata the publisher gave. You can feed it "
-     "to a text encoder alongside the values, or ignore it.",
+     "Titles, notes and descriptions derived from provider metadata. These support search, "
+     "interpretation and optional text encoder inputs; descriptions are not additional observations.",
      ["dataset_title", "title", "description", "notes"]),
     ("classification", "structure",
      "Where the series sits in the published table. Each dimension keeps its code and its label, "
@@ -58,21 +57,21 @@ SCHEMA_FAMILIES = [
      ["frequency", "frequency_raw", "units", "seasonal_adjustment", "geo", "geo_label",
       "dimensions", "tags"]),
     ("the data", "numbers",
-     "Dates, values and status flags, stored as lists on the row. Missing observations stay as "
-     "nulls rather than disappearing, and flags such as provisional or estimated are kept.",
+     "Aligned lists of dates, values and status flags. Stored nulls and provider flags are retained; "
+     "absent calendar periods may be omitted and must be reconstructed as missing for regular-grid models.",
      ["dates", "values", "flags"]),
     ("licence", "licence",
-     "The licence, its URL, and the credit the publisher asks for. Filtering on these gives a "
-     "subset you can share.",
+     "Recorded licence classifications, provider terms and attribution text. These support "
+     "review of permitted uses; a metadata filter does not certify permission to redistribute or train models.",
      ["license_id", "license_name", "license_url", "license_detail", "attribution",
       "license_notes"]),
     ("extent", "numbers",
-     "Start, end and counts. They are fixed-width, so a scan that reads only these never touches "
-     "the values: a pass over the whole corpus takes about twelve seconds.",
+     "Stored endpoints and counts of points, observed values and flags. These scalar columns "
+     "can be scanned without reading the numerical lists. Observation counts differ from calendar coverage.",
      ["start_date", "end_date", "n_points", "n_obs", "n_flagged"]),
     ("provenance", "keys",
-     "Who produced the number, when it was fetched, and which vintage it is. FRED republishes "
-     "80,274 OECD series, so the originating agency is worth keeping.",
+     "Originating agencies, source links and retrieval metadata help trace observations and "
+     "identify possible overlap across providers. The vintage field does not imply a historical revision archive.",
      ["origin_agencies", "origin_us_federal", "source_url", "last_updated", "retrieved_at",
       "vintage"]),
 ]
@@ -209,6 +208,9 @@ section:last-of-type { border-bottom: 0; }
 .scroller { overflow-x: auto; margin-top: 1.5rem; }
 table { border-collapse: collapse; width: 100%; font-size: 0.86rem; min-width: 640px; }
 caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 0.9rem; }
+.table-notes { color: var(--muted); font-size: 0.86rem; max-width: 90ch; margin-top: 1rem; }
+.table-notes p { margin-bottom: 0.65rem; }
+.sample-count { display: block; font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem; }
 th, td { padding: 0.5rem 0.8rem 0.5rem 0; text-align: right; white-space: nowrap;
   border-bottom: 1px solid var(--rule); }
 th { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase;
@@ -373,12 +375,12 @@ def _length_table(length: pl.DataFrame, years: float) -> str:
     head = (
         '<thead>'
         '<tr><th rowspan="2">frequency</th><th rowspan="2"></th>'
-        f'<th rowspan="2">&ge; {years:g} years</th><th rowspan="2">of all</th>'
-        '<th rowspan="2">still published</th>'
-        '<th colspan="3" class="group">how long one series is, in observations</th>'
-        '<th rowspan="2">median, in years</th></tr>'
-        '<tr><th class="sub">shortest 5%</th><th class="sub">median</th>'
-        '<th class="sub">longest 5%</th></tr>'
+        '<th rowspan="2">meets count<br>threshold</th><th rowspan="2">share of all</th>'
+        '<th rowspan="2">also within<br>endpoint cutoff</th>'
+        '<th colspan="3" class="group">observations per eligible series</th>'
+        '<th rowspan="2">median<br>year-equivalent</th></tr>'
+        '<tr><th class="sub">5th percentile</th><th class="sub">median</th>'
+        '<th class="sub">95th percentile</th></tr>'
         '</thead>'
     )
     body = []
@@ -394,24 +396,27 @@ def _length_table(length: pl.DataFrame, years: float) -> str:
             _freq_cell(r["frequency"]), _bar(r["n_long"], largest),
             _td(f'<strong>{_n(r["n_long"])}</strong>', lead=True),
             _td(f'{_pct(r["long_share"])} of {_n(r["n_series"])}'),
-            _td(_n(r["n_long_live"])), _td(f'{r["p5"]:,}'), _td(f'<strong>{r["p50"]:,}</strong>'),
-            _td(f'{r["p95"]:,}'), _td(_num(r["p50_years"])),
+            _td(_n(r["n_long_live"])), _td(_num(r["p5"], 0)), _td(f'<strong>{_num(r["p50"], 0)}</strong>'),
+            _td(_num(r["p95"], 0)), _td(_num(r["p50_years"])),
         ], "exact"))
     return (
         '<div class="scroller"><table>'
-        f'<caption>Exact, over every series. The bar is {years:g} years <em>of the series\' own '
-        f'frequency</em> — {years:g} observations for annual, 24 for monthly. Bars are log-scaled.'
+        f'<caption>Full-collection summary. The count threshold corresponds to {years:g} '
+        f'year-equivalents: {min_obs("A", years)} annual or {min_obs("M", years)} monthly observations, '
+        'with a minimum of two observations. Bars show eligible series counts and are log-scaled.'
         '</caption>' + head + "<tbody>" + "\n".join(body) + "</tbody></table></div>"
     )
 
 
 def _value_table(values: pl.DataFrame) -> str:
-    head = ('<thead><tr><th>frequency</th><th>sampled</th><th>one point only</th>'
-            '<th>distinct values</th><th>unique share</th><th>constant</th>'
-            '<th>near-constant</th><th>has a value &le; 0</th></tr></thead>')
+    head = ('<thead><tr><th>frequency</th><th>sampled<br>series</th><th>&lt; 2<br>observations</th>'
+            '<th>distinct values<br>median</th><th>distinct / observed<br>median</th><th>constant</th>'
+            '<th>distinct / observed<br>&lt; 0.05</th><th>any value<br>&le; 0</th></tr></thead>')
     body = [
         _row([
-            _freq_cell(r["frequency"]), _td(_n(r["sampled"])), _td(_pct(r["share_one_point"])),
+            _freq_cell(r["frequency"]),
+            _td(f'{_n(r["sampled"])}<span class="sample-count">{r["datasets"]:,} files</span>'),
+            _td(_pct(r["share_one_point"])),
             _td(_num(r["distinct_median"], 0)), _td(_fixed(r["unique_share_median"], 2)),
             _td(_pct(r["share_constant"], 1)), _td(_pct(r["share_near_constant"], 1)),
             _td(_pct(r["share_nonpositive"], 1)),
@@ -421,10 +426,9 @@ def _value_table(values: pl.DataFrame) -> str:
     total = int(values["sampled"].sum()) if values.height else 0
     return (
         '<div class="scroller"><table>'
-        f'<caption>Estimated from {_n(total)} series drawn across datasets — this is the only part '
-        'that has to read the value lists, and 30 GB of them is too many to read for a summary. '
-        'Series with a single observation are excluded from every column but the first: with one '
-        'point a series is at once 100% unique and 100% constant.</caption>'
+        f'<caption>Descriptive sample: {total:,} series. The sample count and &lt; 2 observations '
+        'column include all sampled rows; the remaining columns use only rows with at least '
+        'two observed values.</caption>'
         + head + "<tbody>" + "\n".join(body) + "</tbody></table></div>"
     )
 
@@ -433,9 +437,9 @@ def _conc_table(conc: pl.DataFrame) -> str:
     per = _order(conc.filter(pl.col("frequency") != "*"))
     top_n = int(per["top_n"][0]) if per.height else 10
     largest = max(per["datasets"].to_list()) if per.height else 0
-    head = ('<thead><tr><th>frequency</th><th></th><th>datasets</th><th>effective</th>'
-            '<th>largest dataset</th><th>its share</th>'
-            f'<th>top {top_n}</th></tr></thead>')
+    head = ('<thead><tr><th>frequency</th><th></th><th>datasets</th><th>effective<br>count</th>'
+            '<th>largest dataset</th><th>share of<br>series</th>'
+            f'<th>top {top_n}<br>share</th></tr></thead>')
     body = [
         _row([
             _freq_cell(r["frequency"]), _bar(r["datasets"], largest, dim=True),
@@ -447,9 +451,9 @@ def _conc_table(conc: pl.DataFrame) -> str:
     ]
     return (
         '<div class="scroller"><table>'
-        '<caption>Exact. <em>Effective</em> is the perplexity of the series-per-dataset '
-        'distribution: the number of equally sized datasets that would be as diverse as what is '
-        'actually here. Bars show the raw dataset count, log-scaled.</caption>'
+        '<caption>Full-collection summary, weighted by series count. The effective count '
+        'is exp(&minus;&sum; p log p), where p is a dataset\'s share of series within the frequency '
+        '(entropy perplexity). Bars show dataset counts and are log-scaled.</caption>'
         + head + "<tbody>" + "\n".join(body) + "</tbody></table></div>"
     )
 
@@ -503,8 +507,10 @@ def _specimens_block(spec: pl.DataFrame) -> str:
         <ul class="dims">{dims}</ul>
       </figure>""")
     return f"""
-    <p class="prose specimen-lead">Four rows from the corpus, with different sources, frequencies
-    and subjects. Each is drawn against its own range, so the heights are not comparable.</p>
+    <p class="prose specimen-lead">Selected examples illustrate the numerical and metadata fields.
+    They were chosen for display, not sampled for representativeness. Each is drawn against its own range;
+    heights are not comparable. The curves use downsampled non-null values; their horizontal axis
+    shows display order rather than elapsed time and does not represent missing periods.</p>
     <div class="rows">{"".join(cards)}</div>"""
 
 
@@ -513,10 +519,10 @@ def _schema_section(spec: pl.DataFrame) -> str:
     return f"""
   <section id="schema">
     <p class="eyebrow">The schema</p>
-    <h2>One row per series, {total} columns.</h2>
-    <p class="prose">The sources publish in formats that have nothing in common. They are mapped
-    onto the same {total} columns, so the whole corpus opens as one table whichever source a
-    series came from. The columns fall into seven groups.</p>
+    <h2>One row per series, {total} columns</h2>
+    <p class="prose">Provider-specific formats are mapped to a common Parquet schema. Each row
+    combines numerical observations with descriptions, dimensions, provenance and licensing
+    metadata. Field availability varies by provider.</p>
     {_schema_grid()}
     {_specimens_block(spec)}
   </section>
@@ -526,37 +532,37 @@ def _schema_section(spec: pl.DataFrame) -> str:
 def _leakage_section() -> str:
     return """
   <section id="leakage">
-    <p class="eyebrow">Curation and leakage</p>
-    <h2>This kind of data is prone to leakage.</h2>
-    <p class="prose">Series are kept as published, with their own start, end and gaps. The part
-    worth knowing about is that economic statistics come with pitfalls that are easy to miss, and
-    most of them make a random train/test split look better than it is. Twelve are written up so
-    far, and we keep finding more.</p>
+    <p class="eyebrow">Evaluation design</p>
+    <h2>Dependencies, revisions and forecast information sets</h2>
+    <p class="prose">The appropriate holdout depends on the research question. Forecasting future
+    observations requires chronological cutoffs; transfer to unseen series or domains also
+    requires a defensible grouping strategy. The following properties need attention in either setting.</p>
     <div class="traps">
-      <div><h4>The same series in another form</h4><p>Seasonally adjusted next to raw, an index
-      next to its level, another currency, a per-capita version. Different numbers, same
-      information.</p></div>
+      <div><h4>Related representations</h4><p>Levels, indices, seasonal adjustments and
+      per-capita measures can share underlying information. Group related indicators when the
+      evaluation is intended to measure transfer to unseen economic signals.</p></div>
       <div><h4>Accounting identities</h4><p>Geographic and product hierarchies, national accounts
-      identities, mirror trade, stock and flow pairs. A total is a sum of series that can end up
-      on the other side of the split.</p></div>
-      <div><h4>Revisions</h4><p>Only the latest vintage is stored. A 2008 value is the number as
-      it reads now, not as it was published then. A backtest that is not real-time uses data that
-      was not available at the time.</p></div>
-      <div><h4>Publication lag and projections</h4><p>A quarterly figure is released weeks after
-      the period it covers. Some series run to 2100 because they are forecasts. Both look like
-      history.</p></div>
-      <div><h4>Filters and imputation</h4><p>Smoothed, interpolated and estimated values carry
-      information backwards inside a single series. Splitting cannot fix that; the status flags
-      are there to find it.</p></div>
-      <div><h4>Ill-formed series</h4><p>Constants, series that are still updated but have not
-      moved in years, series that are almost entirely one value. They pass any length or recency
-      filter and teach a model nothing. The sampled table below counts them.</p></div>
-      <div><h4>The same series from two sources</h4><p>FRED republishes 80,274 OECD series, and
-      there are near-duplicates within single sources too. <code>origin_agencies</code> is there
-      to find them.</p></div>
+      identities and stock-flow relationships can link observations across series. Related
+      aggregates and components may cross a dataset boundary; dataset-level splits do not resolve every dependency.</p></div>
+      <div><h4>Revisions</h4><p>The collection stores the latest vintage available at retrieval,
+      not a full history of releases. Historical values may therefore incorporate later revisions.
+      Describe such evaluations as retrospective; real-time studies require vintage and availability data.</p></div>
+      <div><h4>Publication lag and projections</h4><p>An observation date identifies its reference
+      period, not necessarily its release date. Future-dated records may be published projections.
+      Check both availability and series definitions before assigning forecast targets.</p></div>
+      <div><h4>Transformations and imputation</h4><p>Some smoothing or imputation procedures use
+      later observations. Fit model preprocessing on training data only and inspect provider
+      methods; status flags can help but do not document every transformation.</p></div>
+      <div><h4>Repeated or constant values</h4><p>Repeated values can reflect stable quantities,
+      discrete measurements, rounding or reporting conventions. Their relevance depends on the
+      task. Document any exclusion rule and assess its effect on evaluation coverage.</p></div>
+      <div><h4>Overlap between sources</h4><p>Providers may republish the same indicators or related
+      aggregates. Originating-agency metadata helps identify candidates, but confirming duplicate
+      or equivalent series requires checking definitions, units, dates and values.</p></div>
     </div>
-    <p class="prose closing">This is why the split groups by dataset instead of shuffling rows,
-    and why the cleaning routine is opt-in rather than the default.</p>
+    <p class="prose closing">The grouping helper supports dataset-level holdouts; it does not
+    establish independence or impose chronological cutoffs. Retain observation masks and document
+    cohort selection, transformations and evaluation dates.</p>
   </section>
 """
 
@@ -590,23 +596,23 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
     # glance, so it stays in its own table where the caption can explain it.
     observations = int(length["n_obs_total"].sum()) if "n_obs_total" in length.columns else None
     figures = [
-        (_n(total), "series in total"),
-        (_n(observations) if observations else "—", "observations in total"),
-        (_n(long_total), f"with at least {years:g} years of their own frequency"),
-        (_n(live_total), "…and still being published"),
-        (_n(nonannual), "…of those, not annual"),
-        (str(crawl.height), "source agencies, with more planned"),
+        (_n(total), "stored series entries"),
+        (_n(observations) if observations is not None else "—", "recorded non-null observations"),
+        (_n(long_total), f"meet the {years:g}-year-equivalent count threshold"),
+        (_n(live_total), "also meet the endpoint cutoff"),
+        (_n(nonannual), "of that subset, nonannual"),
+        (str(crawl.height), "data providers in this report"),
     ]
 
     body = f"""
 <header class="top"><div class="wrap">
   <span class="name">{mark_svg(22, ink="currentColor", paper="var(--paper)", rim=False, standalone=False)}terrastat</span>
   <nav>
-    <a href="#corpus">the corpus</a>
+    <a href="#corpus">coverage</a>
     <a href="#start">getting started</a>
     <a href="#schema">the schema</a>
     <a href="#leakage">leakage</a>
-    <a href="#what">what is in it</a>
+    <a href="#what">scope</a>
     <a href="#licence">licences</a>
     <a href="{_e(repo)}">repository &#8599;</a>
   </nav>
@@ -617,153 +623,166 @@ def render(tables: dict[str, pl.DataFrame], years: float = MIN_YEARS,
 
   <div class="hero">
    <div class="hero-text">
-    <p class="eyebrow">An open dataset · in progress</p>
-    <h1>A dataset of the world&#8217;s economic time series.</h1>
-    <p class="lede">{_n(total)} time series of official economic statistics — prices, trade,
-      output, labour, migration, health, energy — collected from <strong>FRED</strong>,
-      <strong>Eurostat</strong> and the <strong>OECD</strong>, and put on one uniform schema so
-      you can train and evaluate models across all of them at once. Every series arrives with its
-      own licence and the credit its publisher asks for, so cutting a subset you are allowed to
-      share is a one-line filter.</p>
-    <p class="status"><i class="dot"></i>Three sources so far, and growing. The schema is built to
-      absorb more, and more are planned — energy, trade and web-activity series among them.</p>
+    <p class="eyebrow">Economic data for time-series research</p>
+    <h1>Economic time series, with context.</h1>
+    <p class="lede">terrastat collects data from <strong>FRED</strong>, <strong>Eurostat</strong>
+      and the <strong>OECD</strong> into a common Parquet schema. Numerical observations are
+      stored alongside descriptions, units, status flags, provenance and licence metadata,
+      supporting data exploration and reproducible time-series studies.</p>
+    <p class="status">This report describes a collected corpus, not a claim of complete provider
+      coverage. Figures were computed {_e(tables.get('generated') or dt.date.today().isoformat())};
+      the reference date for endpoint comparisons is {asof}. Public release hosting is not yet configured.</p>
    </div>
    <figure class="hero-globe">
     {globe_svg()}
-    <figcaption>Each arc is a time series on its parallel, coloured by subject. At the right edge
-    it leaves the globe and its forecast fans out beside it.</figcaption>
+    <figcaption>Project illustration; the curves and forecast bands are schematic.</figcaption>
    </figure>
 
     <div class="figures">
       {"".join(f'<div><div class="v">{v}</div><div class="k">{k}</div></div>' for v, k in figures)}
     </div>
     <div class="legend">
-      <span><i class="swatch e"></i> exact, over every series</span>
-      <span><i class="swatch s"></i> estimated from a sample</span>
-      <span>&ldquo;still being published&rdquo; = a new observation within the last
-        {live_periods:g} periods of the series&#8217; own frequency, measured against {asof},
-        the newest retrieval in the corpus</span>
+      <span><i class="swatch e"></i> full-collection summaries</span>
+      <span><i class="swatch s"></i> descriptive sample diagnostics</span>
+      <span>Displayed totals are rounded. Counts refer to stored entries, without deduplication
+      of equivalent indicators across datasets or providers.</span>
     </div>
   </div>
 
   <section id="corpus">
     <p class="eyebrow">The corpus</p>
-    <h2>How much data is in it<span class="tag e">exact</span></h2>
-    <p class="prose">How many series there are, how much history each one carries, and how much of
-    it is still being added to. Length is the first thing a modeller asks about and the easiest to
-    answer badly, because two years of data means two observations at annual frequency and
-    twenty-four at monthly — so everything below counts in each series&#8217; own periods, and the
-    spread is measured only among the series long enough to be usable.</p>
+    <h2>Series counts and observation lengths<span class="tag e">full collection</span></h2>
+    <p class="prose">The table describes recorded observation counts by frequency. The threshold
+    selects a reporting cohort; it does not establish that a series is suitable for a particular
+    model, has continuous calendar coverage or contains sufficient seasonal cycles.</p>
     {_length_table(length, years)}
+    <div class="table-notes">
+      <p><strong>Length:</strong> eligibility is <code>n_obs &ge; max(2, ceil({years:g} &times; periods_per_year))</code>.
+      Percentiles and year-equivalents refer only to eligible series. Year-equivalents divide the
+      observation count by periods per year; they do not measure elapsed date span. Irregular or
+      unknown frequencies have no defined conversion.</p>
+      <p><strong>Endpoint cutoff:</strong> the stored end date is no more than {live_periods:g}
+      periods of the series&#8217; own frequency before {asof}, using days / 365.25 &times; periods_per_year.
+      The rule also includes future-dated endpoints. It does not verify ongoing publication,
+      recent releases, or that the final stored point has a non-null value.</p>
+    </div>
   </section>
 
   <section id="start">
     <p class="eyebrow">Getting started</p>
-    <h2>Two ways in, depending on whether you want the data or the crawl.</h2>
+    <h2>Load existing data or collect a dataset</h2>
     <div class="steps">
       <div>
-        <h3>I want to train something</h3>
-        <p>Load a quarterly subset, assign whole datasets to folds, and cut calendar windows.
-        For forecasting, also impose shared chronological cutoffs as shown in the quarterly tutorial.</p>
+        <h3>Use an existing snapshot</h3>
+        <p>Read a local quarterly subset lazily, then inspect its observations and metadata.
+        <code>starter</code> must already exist; this command does not download a release.</p>
         <pre><span class="c"># From a checkout: pip install -e ".[notebook,forecast]"</span>
-import polars as pl
 from terrastat import dataset
 
 lf = dataset.load(<span class="c">"starter"</span>, frequencies=[<span class="c">"Q"</span>])
-folds = dataset.split(lf, by=<span class="c">"dataset_id"</span>)
-train = folds.filter(pl.col(<span class="c">"fold"</span>) == <span class="c">"train"</span>)
-batch = dataset.windows(train, context=<span class="c">24</span>, horizon=<span class="c">4</span>)
-X, y = batch[<span class="c">"X"</span>], batch[<span class="c">"y"</span>]  <span class="c"># missing entries remain NaN</span></pre>
-        <p>The payload is plain Parquet plus a checksummed manifest — readable with polars,
-        pandas, DuckDB or Hugging Face <code>datasets</code>, with nothing of ours installed. The
-        public snapshot is still being prepared; until it lands,
-        <code>terrastat export starter --public-only</code> builds one from your own crawl.</p>
+sample = lf.head(5).collect()
+sample.select(<span class="c">"series_uid", "title", "units", "n_obs"</span>)</pre>
+        <p>Parquet files can also be read with Polars, pandas or DuckDB. For a saved normalized
+        release, follow the <a href="{_e(repo)}/blob/master/docs/deployment.md">online or manual deployment guide</a>
+        to restore its archives and rebuild the series view offline.</p>
+        <p>The <a href="{_e(repo)}/blob/master/notebooks/quarterly_forecasting.ipynb">CPU forecasting notebook</a>
+        compares a shared residual network with ETS and seasonal naive forecasts using
+        chronological training, validation and test periods.</p>
       </div>
       <div>
-        <h3>I want to gather it myself</h3>
-        <p>One command, re-run until it says nothing is left. Add a FRED key to <code>.env</code>
-        first; Eurostat and the OECD need none.</p>
+        <h3>Download from a provider</h3>
+        <p>Start with one Eurostat quarterly unemployment dataset. This example requires no API key.</p>
         <pre>pip install -e .
-terrastat run <span class="c"># all sources, resumable</span>
-terrastat run --max-hours 8 <span class="c"># stop cleanly, resume later</span>
-
-terrastat corpus <span class="c"># regenerate this page</span>
-terrastat quality --out reports/quality
-terrastat search <span class="c">"chicken|poultry"</span></pre>
-        <p>The manual walks through opening a terminal, stopping and resuming, and reading what
-        lands on disk.</p>
+terrastat fetch eurostat --ids une_rt_q --with-series
+terrastat peek eurostat une_rt_q</pre>
+        <p>The <a href="{_e(repo)}/blob/master/MANUAL.md">manual</a> covers dataset discovery,
+        larger collections, FRED key configuration and interruption recovery. Rerunning a crawl
+        resumes unfinished work; it does not automatically refresh completed datasets.
+        See <a href="{_e(repo)}/blob/master/docs/refresh.md">refresh behavior</a>.</p>
       </div>
     </div>
   </section>
 
 {_schema_section(tables.get("specimen", pl.DataFrame()))}
 {_leakage_section()}
-  <section>
-    <h2>What the values look like<span class="tag s">sampled</span></h2>
-    <p class="prose">A long series that barely moves is common here, and close to useless as a
-    training example. <em>Unique share</em> is distinct values over observations; a low one means
-    a step function, or something rounded until the variation is gone. <em>Has a value &le; 0</em>
-    decides whether sMAPE, a log transform or a multiplicative model is safe.</p>
+  <section id="values">
+    <h2>Observed-value diagnostics<span class="tag s">sampled</span></h2>
+    <p class="prose">These summaries describe value repetition and the presence of nonpositive
+    observations. They can inform preprocessing and evaluation choices, but do not measure
+    forecastability or determine whether a series is useful for training.</p>
     {_value_table(values) if values.height else ""}
+    <div class="table-notes">
+      <p><strong>Sample design:</strong> files are selected in a seeded random order within each
+      frequency, then the first rows of each selected file are read up to a per-file cap.
+      Rows are not sampled uniformly across the corpus, and summaries are not weighted by
+      dataset size. Treat the percentages as descriptions of the sampled rows, not population estimates.</p>
+      <p><strong>Definitions:</strong> distinct / observed is the number of distinct non-null values
+      divided by <code>n_obs</code>. Constant means at most one distinct observed value. The
+      &lt; 0.05 column uses this ratio, not variance or change magnitude, and can overlap with
+      the constant category. Repetition may reflect discrete quantities, rounding or stable measurements.</p>
+      <p><strong>Model and metric assumptions:</strong> nonpositive observations require attention
+      for log transformations and methods assuming strictly positive data. They do not by themselves
+      determine whether sMAPE is appropriate: its definition, forecast values, zero denominators
+      and near-zero magnitudes also matter. See the
+      <a href="https://otexts.com/fpp2/accuracy.html">forecast-accuracy discussion</a>.</p>
+    </div>
   </section>
 
-  <section>
-    <h2>How concentrated it is<span class="tag e">exact</span></h2>
-    <p class="prose">A series count makes a corpus look broader than it is when most of it comes
-    from a few very large tables. The more concentrated a frequency, the more a random split puts
-    near-copies of the same table on both sides.</p>
+  <section id="concentration">
+    <h2>Dataset concentration<span class="tag e">full collection</span></h2>
+    <p class="prose">This table shows how stored series are distributed across source datasets.
+    Large cross-tabulations can dominate a frequency's series count. Concentration is relevant
+    to sampling and weighting, but does not directly measure domain diversity, duplication or statistical independence.</p>
     {_conc_table(conc) if conc.height else ""}
   </section>
 
   <section id="what">
-    <p class="eyebrow">What is in it</p>
-    <h2>What is in it.</h2>
+    <p class="eyebrow">Scope and interpretation</p>
+    <h2>What the collection provides</h2>
     <div class="facts">
       <div>
-        <h3>Broad, and deliberately uncurated</h3>
-        <p>Daily to five-yearly, national accounts to fisheries by species, with histories reaching
-        back to the seventeenth century and forward to published projections. Series keep their own start, end and
-        gaps: what counts as clean depends on the question, so nothing is trimmed on your behalf.</p>
+        <h3>Economic and social indicators</h3>
+        <p>The collection includes multiple subjects and frequencies, with provider-specific
+        definitions, date spans and missingness. It also contains published projections.
+        Counts describe the retrieved collection, not a representative sample of economic activity.</p>
       </div>
       <div>
-        <h3>Licences are sorted out</h3>
-        <p>Terms differ by agency and, for FRED, by series. Every row carries its own
-        <code>license_id</code>, <code>license_url</code>, <code>attribution</code> and
-        originating agency, so selecting a subset you can redistribute is a filter, and the export
-        writes out the citations each source asks for.</p>
+        <h3>Documented provenance and terms</h3>
+        <p>The schema records source links, retrieval dates, licence classifications and
+        attribution where available. These support traceability and permission checks;
+        users still need to review provider terms for their intended use.</p>
       </div>
       <div>
         <h3>One row per series</h3>
-        <p>The same 36 columns whatever the source, so the whole thing opens as one dataset in
-        polars, pandas or DuckDB. Dates, values and status flags sit as lists on the row, next to
-        the metadata.</p>
+        <p>The shared 36-column schema can be queried using standard Parquet tools. Dates,
+        values and status flags are stored as aligned lists. No calendar completion or imputation
+        is required to read the stored series; regular-grid models need explicit gap handling.</p>
       </div>
       <div>
-        <h3>Made for leakage-aware splits</h3>
-        <p>The sources republish one another, totals sit next to their parts, and the same
-        indicator turns up at several frequencies. Twelve of these are documented, and the
-        splitting that ships groups by dataset instead of shuffling rows.</p>
+        <h3>Support for research workflows</h3>
+        <p>Local readers, grouping helpers, missing-value masks and a CPU forecasting tutorial
+        provide starting points for experiments. The
+        <a href="{_e(repo)}/blob/master/docs/leakage.md">evaluation guide</a> describes dependencies
+        and availability issues that require study-specific decisions.</p>
       </div>
     </div>
   </section>
 
   <section id="licence">
-    <p class="eyebrow">Before you redistribute anything</p>
-    <h2>The code is Apache-2.0. The data is not.</h2>
+    <p class="eyebrow">Licensing and citation</p>
+    <h2>Code and data have separate terms</h2>
     <div class="licence">
-      <h3>Licences travel with the rows, and they differ</h3>
-      <p>Eurostat and the OECD permit re-use, including commercial re-use, <strong>with
-      attribution</strong>. FRED reports a copyright status per series, and its own terms restrict
-      archiving and machine-learning use of material that passes through it — while the underlying
-      US federal data is public domain at its origin.</p>
-      <p>The subset to publish is therefore a filter, not a whole corpus:
-      <code>terrastat export NAME --public-only</code> keeps Eurostat, the OECD, and the FRED rows
-      that are both public domain and federal in origin, and writes an
-      <code>ATTRIBUTIONS.md</code> beside the data. Check <code>license_id</code> and
-      <code>attribution</code> on the rows you actually use.</p>
+      <h3>Retain attribution and review the intended use</h3>
+      <p>The software is Apache-2.0; that licence does not grant rights to the data.
+      Provider policies and dataset-specific exceptions apply. In particular,
+      <a href="https://fred.stlouisfed.org/legal/terms/">FRED's terms</a> restrict archiving and
+      machine-learning use. A public-domain classification of underlying data does not override service terms.</p>
+      <p><code>--public-only</code> applies an initial licence-metadata filter; it does not certify
+      permission. Preserve <code>ATTRIBUTIONS.md</code>, the snapshot manifest and source citations
+      with any permitted release. The <a href="{_e(repo)}/blob/master/docs/licensing.md">licensing
+      and citation guide</a> links provider policies and explains the recorded fields.</p>
       <p>Not affiliated with, endorsed by, or connected to Eurostat, the OECD, the Federal Reserve
-      Bank of St. Louis, or any statistical agency. The name describes what the tool gathers, not
-      where it comes from.</p>
+      Bank of St. Louis, or any statistical agency.</p>
     </div>
   </section>
 
@@ -771,8 +790,8 @@ terrastat search <span class="c">"chicken|poultry"</span></pre>
 </main>
 
 <footer><div class="wrap">
-  <p>Every figure on this page is computed by <code>terrastat corpus</code>, never written by hand.
-  Generated {_e(tables.get('generated') or dt.date.today().isoformat())} from {_e(sources)}; retrievals
+  <p>Summary tables are generated by <code>terrastat corpus</code> from a saved report.
+  Statistics computed {_e(tables.get('generated') or dt.date.today().isoformat())} from {_e(sources)}; latest retrieval per provider:
   {" · ".join(f'{_e(r["source"])} {_e(r["last_retrieved"][:10])}' for r in crawl.iter_rows(named=True))}.</p>
   <p>{(_e(author) + " · ") if author else ""}code Apache-2.0 ·
   <a href="{_e(repo)}">{_e(repo.replace("https://", ""))}</a></p>
@@ -789,8 +808,8 @@ terrastat search <span class="c">"chicken|poultry"</span></pre>
         "<!doctype html>\n<html lang=\"en\">\n<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        '<meta name="description" content="A dataset of the world&#39;s economic time series: FRED, '
-        'Eurostat and the OECD on one uniform schema, with the licence of every series attached.">\n'
+        '<meta name="description" content="Economic time-series data from FRED, Eurostat and the OECD '
+        'in a common Parquet schema, with provenance, licensing metadata and documented research workflows.">\n'
         '<meta name="color-scheme" content="light dark">\n'
         f"{head}\n</head>\n<body>{body}</body>\n</html>\n"
     )

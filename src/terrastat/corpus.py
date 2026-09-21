@@ -1,22 +1,20 @@
-"""The corpus at a glance: one page, regenerated from the data rather than written by hand.
+"""Corpus statistics for research use, regenerated from the stored series layer.
 
-`terrastat quality` answers "is this any good?" in detail, across source × frequency, with a dozen
-tables. This is the other thing people need — a page you can read in fifteen seconds that says how
-much there is, how long it is, how much of it is still being published, and how much of it is
-repetitive or duplicated. It is aimed at somebody who does not care what the series are *about*:
-they want to know what shape a training set drawn from here would have.
+The report describes series counts, observation lengths, endpoint dates, observed-value
+characteristics and dataset concentration. It complements the more detailed source-by-frequency
+tables produced by ``terrastat quality``. These summaries describe the collected data; they do
+not establish suitability for a particular model or evaluation design.
 
-Every number is computed, and the page carries the date and the crawl timestamps it was computed
-from, so a stale page is visibly stale. Regenerate it after a crawl, after adding a source, or
-after any change to how series are built::
+The report records its computation date and source retrieval timestamps. Regenerate it after a
+crawl, after adding a source, or after any change to how series are built::
 
     terrastat corpus --out docs/corpus.md
 
-**Exact versus sampled.** Counts, lengths and recency are exact over the whole population — they
-come from scalar columns only, so a pass over a billion series costs seconds rather than reading
-the 30 GB of value lists. Distinctness and sign have to look at the values themselves, so they are
-estimated from a sample drawn across datasets; the page labels them and reports the sample size.
-Never quote a sampled figure as a population count.
+**Full-corpus versus sample summaries.** Counts, lengths and endpoint statistics use every
+stored series in the requested scope and require only scalar columns. Value diagnostics read
+a bounded sample of value lists. Files are selected randomly, but rows within each selected file
+are taken from its beginning. These unweighted sample summaries are descriptive, not estimates
+with known sampling uncertainty for the full corpus.
 """
 from __future__ import annotations
 
@@ -39,23 +37,18 @@ FREQ_NAME = {
     "M": "monthly", "Q": "quarterly", "S": "semiannual", "A": "annual", "A3": "3-yearly",
     "P": "5-yearly", "I": "irregular", "OTHER": "unknown",
 }
-# Reading order, by how much of the corpus a reader is likely to care about: the three frequencies
-# most economic modelling actually uses, then the rest by size, then the ones with no fixed period.
-# Not fastest-first: sorting by period would open every table with 14 thousand daily series and
-# bury the 620 million annual ones in the middle.
+# Presentation order: annual, monthly and quarterly first, followed by the remaining frequencies.
 FREQ_ORDER = ["A", "M", "Q", "W", "D", "S", "A3", "P", "BW", "H", "B", "I", "OTHER"]
 
-# The headline length bar, in years of the series' own frequency. Two years is two seasonal
-# cycles: the shortest history in which a yearly pattern can be seen twice and so be told apart
-# from a trend. `A3` and `P` step more than a year at a time, so their bar is two observations.
+# The observation-count threshold is max(2, ceil(years * periods_per_year)). It does not
+# establish elapsed coverage, contiguous observations, seasonality or modelling suitability.
 MIN_YEARS = 2.0
 
-# "Still being published", in periods of the series' own frequency. Twelve is deliberately loose:
-# it keeps a monthly series that is a year behind and an annual series that is a decade behind on
-# the same footing, and it is robust to a source that publishes in irregular bursts.
+# Endpoint lag cutoff, in approximate periods of the series' own frequency. This is not a
+# publication-status measure; future endpoints also satisfy the one-sided lag comparison.
 LIVE_PERIODS = 12.0
 
-# The 90% extremes of length, reported alongside the median.
+# Observation-count quantiles among series meeting the length threshold.
 LENGTH_QUANTILES = (0.05, 0.5, 0.95)
 
 
@@ -68,9 +61,8 @@ def min_obs(frequency: str, years: float = MIN_YEARS) -> int | None:
 def _order(df: pl.DataFrame) -> pl.DataFrame:
     """Put the rows in reading order.
 
-    Applied when rendering, not only when computing: row order is presentation, so changing
-    ``FREQ_ORDER`` should take effect on a `--render` in under a second rather than requiring a
-    fresh pass over a billion series.
+    Applied when rendering as well as computing, so changing ``FREQ_ORDER`` does not require
+    rescanning the stored series.
     """
     if not df.height or "frequency" not in df.columns:
         return df
@@ -80,7 +72,7 @@ def _order(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def crawled_at(root=None, sources=None) -> pl.DataFrame:
-    """When each source was last retrieved. A scalar-only pass, so it is nearly free."""
+    """Latest recorded retrieval timestamp and stored series count per source."""
     from terrastat.quality import scan
 
     return (scan(root, sources, None, ["source", "retrieved_at"])
@@ -94,10 +86,8 @@ def crawled_at(root=None, sources=None) -> pl.DataFrame:
 def _wq(value: pl.Series, weight: pl.Series, qs) -> list[int]:
     """Quantiles of a weighted, already-sorted value column.
 
-    The corpus has a billion series and a few thousand distinct lengths, so counting each length
-    and reading the quantiles off the cumulative counts is both exact and small. Asking polars for
-    ``median()`` over the raw column instead materialises it — a 15 GB allocation, in the run that
-    prompted this.
+    Count each distinct length, then select the first value whose cumulative count reaches
+    the requested fraction. This avoids materialising the full observation-count column.
     """
     cum = weight.cum_sum()
     total = cum[-1]
@@ -110,12 +100,12 @@ def _wq(value: pl.Series, weight: pl.Series, qs) -> list[int]:
 
 def length_table(root=None, sources=None, frequencies=None, asof: dt.date | None = None,
                  years: float = MIN_YEARS, live_periods: float = LIVE_PERIODS) -> pl.DataFrame:
-    """Per frequency: how many series, how many are long enough, how long they are, how many are
-    still being published — all exact, from one pass over three scalar columns.
+    """Per-frequency counts, observation lengths and endpoint lag, using all scoped series.
 
-    ``asof`` defaults to the most recent ``retrieved_at`` in the corpus, not to today. Measured
-    against today, a daily series looks stale the moment a crawl finishes, which says something
-    about the crawl and nothing about the source.
+    ``asof`` defaults to the most recent ``retrieved_at`` in the corpus. Endpoint lag uses
+    ``end_date``, which need not be the date of the last non-missing observation or a release
+    date. A future endpoint passes the one-sided lag cutoff. The internal ``live`` names are
+    retained for compatibility; they do not indicate whether a provider still publishes a series.
     """
     from terrastat.quality import scan
 
@@ -169,26 +159,25 @@ def length_table(root=None, sources=None, frequencies=None, asof: dt.date | None
     ).with_columns(pl.lit(asof).alias("asof"))
 
 
-# -- sampled: what the values look like ----------------------------------------------------------
+# -- sampled observed-value diagnostics ----------------------------------------------------------
 
 def value_table(root=None, sources=None, frequencies=None, per_frequency: int = 100_000,
                 max_files: int = 250, seed: int = 0) -> pl.DataFrame:
-    """Distinctness and sign, estimated from a sample pooled across sources.
+    """Descriptive distinctness and sign summaries for a sample pooled across sources.
 
-    Reading the value lists is the expensive part of this corpus, so this reads the head of each
-    of ``max_files`` randomly chosen datasets per frequency rather than the whole thing. One file
-    is one dataset, so the draw spreads over the catalogue; within a dataset the rows are its
-    first series in key order, which is arbitrary with respect to how the values behave but is not
-    a random sample. Treat these as indicative.
+    Read the first ``max(50, per_frequency // max(max_files, 1))`` rows from each of up to
+    ``max_files`` randomly selected dataset files per frequency. File selection is random;
+    within-file row selection is not. Rows are pooled without sampling weights, so these
+    summaries should not be interpreted as representative estimates of corpus-wide prevalence.
 
-    ``unique_share`` is distinct values over observations. A low value means a series that barely
-    moves — a constant, a step, or something rounded until the variation is gone — which inflates
-    a corpus without teaching a model anything. ``nonpositive`` matters before anyone reaches for
-    sMAPE, a log transform or a multiplicative model.
+    ``unique_share`` is the count of distinct non-null values divided by ``n_obs``. It measures
+    repetition, not the magnitude or temporal pattern of variation. The legacy
+    ``share_near_constant`` field is the proportion with this ratio below 0.05; it is not a
+    variance threshold and includes constant series when they satisfy the ratio threshold.
 
-    Series with fewer than two observations are left out of every statistic here: with one point a
-    series has one distinct value, which would otherwise be reported as both "100% unique" and
-    "100% constant" — as it was, for the 853 million single-point annual series.
+    Sample counts and ``share_one_point`` use all sampled rows; despite its legacy name, the
+    latter includes every row with ``n_obs < 2``. Other summaries use only ``n_obs >= 2`` and
+    exclude nulls when counting distinct values or checking for nonpositive values.
     """
     root = series_root(root)
     rng = random.Random(seed)
@@ -246,9 +235,8 @@ def value_table(root=None, sources=None, frequencies=None, per_frequency: int = 
 
 # -- one real row, so the schema is shown rather than described ----------------------------------
 
-# Datasets tried first when picking rows to illustrate the schema. These are chosen for variety of
-# subject, not cherry-picked for flattering numbers: whichever series is picked inside them is the
-# longest one that actually varies, and the page says so. Anything missing is skipped silently, so
+# Datasets tried first for schema illustrations. Examples are deliberately selected by subject,
+# length and distinctness; they are not a representative sample. Missing candidates are skipped so
 # a partial crawl still produces a page.
 SHOWCASE = ("FISH_INLAND", "ert_bil_eur_d", "prc_hicp_midx", "apro_ec_poulm", "sts_inpr_m")
 
@@ -256,16 +244,11 @@ SHOWCASE = ("FISH_INLAND", "ert_bil_eur_d", "prc_hicp_midx", "apro_ec_poulm", "s
 def specimens(root=None, sources=None, frequencies=None, n: int = 4, min_obs: int = 25,
               min_unique_share: float = 0.5, candidates: int = 60,
               hints: tuple[str, ...] = SHOWCASE) -> pl.DataFrame:
-    """A handful of real rows, to show the schema rather than describe it.
+    """Select illustrative rows with sufficient length, descriptions and distinct values.
 
-    Three things disqualify a candidate, and the third is easy to forget: it must be long enough
-    to draw, carry dimensions to show a hierarchy, and actually *vary*. The first row this picked
-    was 192 monthly observations of Austrian hatchery chicks, zero in every month but one — valid
-    data, and an advertisement for nothing.
-
-    Reading the values of a billion series would be absurd, so the search never does: the
-    ``SHOWCASE`` datasets are opened by name, and any remaining slots are filled from a scalar
-    scan whose few dozen candidates are then read one file at a time.
+    The named ``SHOWCASE`` datasets are tried first. Any remaining slots are filled from a
+    scalar scan followed by bounded reads of candidate files. These selected examples
+    illustrate the schema and should not be used to infer the distribution of the corpus.
     """
     rows, seen = [], set()
     for hint in hints:
@@ -365,13 +348,11 @@ def _pack_specimen(r: dict) -> dict:
 # -- exact: how concentrated ---------------------------------------------------------------------
 
 def concentration_table(root=None, sources=None, frequencies=None, top: int = 10) -> pl.DataFrame:
-    """How much of each frequency comes from how few datasets.
+    """Describe the distribution of series counts across source/dataset identifiers.
 
-    A count of series flatters a corpus that is really a handful of enormous cross-tabulations.
-    ``effective_datasets`` is the perplexity of the series-per-dataset distribution — the number of
-    equally sized datasets that would be as diverse as what is actually here — and it is usually a
-    small fraction of the raw dataset count. It is also the leakage warning in numeric form: the
-    more concentrated a frequency, the more a random split puts near-copies on both sides of it.
+    ``effective_datasets`` is exp(-sum(p * log(p))), where p is each dataset's share of series.
+    It is the number of equally sized datasets with the same entropy of series allocation,
+    not a measure of independent information, subject coverage or detected duplication.
     """
     from terrastat.quality import scan
 
@@ -418,7 +399,10 @@ def _pct(x, digits: int = 0) -> str:
 
 def _num(x, digits: int = 1) -> str:
     """A number with trailing zeros trimmed, so a column of lengths reads 4 rather than 4.0."""
-    return "—" if x is None else f"{x:,.{digits}f}".rstrip("0").rstrip(".")
+    if x is None:
+        return "—"
+    formatted = f"{x:,.{digits}f}"
+    return formatted.rstrip("0").rstrip(".") if digits > 0 else formatted
 
 
 def _fixed(x, digits: int = 2) -> str:
@@ -442,11 +426,14 @@ def render(length: pl.DataFrame, values: pl.DataFrame, conc: pl.DataFrame,
     top_n = int(conc["top_n"][0]) if conc.height else 10
 
     L = [
-        "# The corpus at a glance",
+        "# Corpus statistics",
         "",
-        f"*Generated by `terrastat corpus` on {generated}. Recency is measured against "
-        f"{asof} — the most recent retrieval in the corpus, rather than the date you are reading "
-        f"this, because otherwise a daily series looks stale the moment a crawl ends.*",
+        f"*Statistics computed by `terrastat corpus` on {generated}. Endpoint reference date: "
+        f"{asof}. By default, this is the most recent retrieval date in the selected corpus.*",
+        "",
+        "The counts describe the stored series layer at that computation date. They do not "
+        "measure all data available from the providers, statistical independence or the number "
+        "of series suitable for a particular forecasting task. Values displayed below are rounded.",
         "",
         "**Do not edit this file.** Regenerate it after a crawl or after adding a source:",
         "",
@@ -454,25 +441,37 @@ def render(length: pl.DataFrame, values: pl.DataFrame, conc: pl.DataFrame,
         "terrastat corpus --out docs/corpus.md",
         "```",
         "",
-        "## Headline",
+        "## Report scope",
         "",
-        "| | |",
+        "| Measure | Value |",
         "|---|---:|",
-        f"| series in total | **{_n(total)}** |",
-        f"| with at least {years:g} years of their own frequency | **{_n(long_total)}** |",
-        f"| …and still published (within {live_periods:g} periods) | **{_n(live_total)}** |",
-        f"| …excluding annual, which dominates the count | **{_n(int(nonannual['n_long_live'].fill_null(0).sum()))}** |",
-        f"| distinct datasets | {_n(overall['datasets'][0]) if overall.height else '—'} |",
-        f"| …effective, once weighted by size | {_n(round(overall['effective_datasets'][0])) if overall.height else '—'} |",
+        f"| Stored series | **{_n(total)}** |",
+        f"| Meeting the observation-count threshold below | **{_n(long_total)}** |",
+        f"| Of these, endpoint within the {live_periods:g}-period cutoff | **{_n(live_total)}** |",
+        f"| Of these, non-annual frequencies | **{_n(int(nonannual['n_long_live'].fill_null(0).sum()))}** |",
+        f"| Distinct source/dataset identifiers | {_n(overall['datasets'][0]) if overall.height else '—'} |",
+        f"| Entropy-based effective dataset count | {_n(round(overall['effective_datasets'][0])) if overall.height else '—'} |",
         "",
-        "## Length, by frequency",
+        "## Series counts and observation lengths",
         "",
-        f"Exact, over every series. The bar is {years:g} years *of the series' own frequency*, so "
-        f"{years:g} observations for annual and {min_obs('M', years)} for monthly; `A3` and `P` "
-        "step more than a year at a time, so theirs is two observations. `p5 / median / p95` are "
-        "the 90% extremes of length **within the cohort that clears the bar**.",
+        "Computed over all stored series in each frequency. The observation-count threshold is "
+        f"`n_obs >= max(2, ceil({years:g} × periods_per_year))`: {min_obs('A', years)} non-missing "
+        f"observations for annual series, {min_obs('Q', years)} for quarterly and "
+        f"{min_obs('M', years)} for monthly. This is a descriptive selection rule, not a minimum "
+        "requirement for fitting a model. It does not establish elapsed coverage, contiguous "
+        "observations or complete seasonal cycles.",
         "",
-        f"| frequency | ≥ {years:g} years | of all | still published | length (obs) p5 / med / p95 | in years | mean obs |",
+        "The 5th percentile, median, 95th percentile and mean are calculated **only among series "
+        "meeting the observation-count threshold**. The year-equivalent columns divide observation "
+        "counts by nominal periods per year; they are not elapsed calendar spans.",
+        "",
+        "Endpoint lag is `(reference_date - end_date).days / 365.25 × periods_per_year`. "
+        f"The endpoint count includes threshold-eligible series with lag ≤ {live_periods:g}. "
+        "This one-sided cutoff also includes future-dated endpoints, such as projections. "
+        "`end_date` is the last stored date, not necessarily the last non-missing value or a "
+        "publication date; this measure does not establish whether a series is still published.",
+        "",
+        "| Frequency | Meeting threshold | Share of frequency | Endpoint within cutoff | Observations: P5 / median / P95 | Year-equivalent: P5 / median / P95 | Mean observations |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for r in length.iter_rows(named=True):
@@ -482,52 +481,66 @@ def render(length: pl.DataFrame, values: pl.DataFrame, conc: pl.DataFrame,
             continue
         L.append(
             f"| {r['name']} `{f}` | **{_n(r['n_long'])}** | {_pct(r['long_share'])} of {_n(r['n_series'])} "
-            f"| {_n(r['n_long_live'])} | {r['p5']} / **{r['p50']}** / {r['p95']} "
+            f"| {_n(r['n_long_live'])} | {_num(r['p5'], 0)} / **{_num(r['p50'], 0)}** / {_num(r['p95'], 0)} "
             f"| {_num(r['p5_years'])} / **{_num(r['p50_years'])}** / {_num(r['p95_years'])} "
             f"| {_num(r['mean_obs'], 0)} |"
         )
     L += [
         "",
-        "`n/a` where a frequency has no fixed period: a length in years and a lag in periods are "
-        "both undefined for `I` and `OTHER`, so they are counted but not judged.",
+        "`n/a` indicates that no nominal period is defined for `I` or `OTHER`. These series "
+        "contribute to the total count but not to the observation-threshold or endpoint-lag cohorts.",
         "",
-        "## What the values look like",
+        "## Observed-value diagnostics",
         "",
     ]
     if values.height:
         s = int(values["sampled"].sum())
         L += [
-            f"**Sampled, not exact** — {_n(s)} series drawn across datasets, because this is the "
-            "only part that has to read the value lists. Series with a single observation are "
-            "excluded from every column but the first: with one point a series is simultaneously "
-            "100% unique and 100% constant.",
+            f"**Descriptive sample summaries** for {s:,} series. Dataset files are randomly "
+            "selected within each frequency, then a bounded number of rows is read from the "
+            "beginning of each file. Rows are pooled without sampling weights. Because row "
+            "selection within files is not random, these results are not representative estimates "
+            "of corpus-wide prevalence; no sampling uncertainty is reported.",
             "",
-            "| frequency | sampled | one point only | distinct values (med) | unique share (med) | constant | near-constant | has a value ≤ 0 |",
+            "Sample counts and the share with fewer than two observations use **all sampled "
+            "rows**. Every other diagnostic uses only sampled series with `n_obs >= 2`. "
+            "Null values are excluded from the distinct-value count and the nonpositive-value check.",
+            "",
+            "| Frequency | Sampled series (files) | Fewer than 2 observations | Distinct values (median) | Distinct / observed (median) | Constant | Distinct / observed < 0.05 | Any value ≤ 0 |",
             "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
         for r in values.iter_rows(named=True):
             L.append(
-                f"| {r['name']} `{r['frequency']}` | {_n(r['sampled'])} ({r['datasets']} datasets) "
+                f"| {r['name']} `{r['frequency']}` | {_n(r['sampled'])} ({r['datasets']} files) "
                 f"| {_pct(r['share_one_point'])} | {_num(r['distinct_median'], 0)} "
                 f"| {_fixed(r['unique_share_median'], 2)} | {_pct(r['share_constant'], 1)} "
                 f"| {_pct(r['share_near_constant'], 1)} | {_pct(r['share_nonpositive'], 1)} |"
             )
         L += [
             "",
-            "`unique share` is distinct values over observations. A long series with a low unique "
-            "share is a step function or something rounded flat — abundant, and close to "
-            "worthless as a training example. `has a value ≤ 0` is what decides whether sMAPE, a "
-            "log transform or a multiplicative model is safe.",
+            "**Distinct / observed** is the number of distinct non-null values divided by "
+            "`n_obs`, calculated separately for each series. **Constant** means at most one "
+            "distinct non-null value. **Distinct / observed < 0.05** is a repetition diagnostic, "
+            "not a low-variance criterion; it includes constant series when their ratio also "
+            "meets that threshold. A low ratio can occur in discrete, intermittent, rounded or "
+            "repeated-value series and does not, by itself, determine their research value.",
+            "",
+            "**Any value ≤ 0** is the share of eligible series containing at least one "
+            "nonpositive observed value. It can inform checks before using logarithms or "
+            "multiplicative specifications. Metric suitability requires the metric's definition "
+            "and the actual values and forecasts; this flag alone does not determine whether "
+            "sMAPE is defined or appropriate.",
         ]
-    L += ["", "## How concentrated it is", ""]
+    L += ["", "## Dataset concentration", ""]
     if conc.height:
         L += [
-            "Exact. A series count flatters a corpus that is really a few enormous "
-            "cross-tabulations. `effective datasets` is the perplexity of the series-per-dataset "
-            "distribution: the number of *equally sized* datasets that would be as diverse as what "
-            "is actually here.",
+            "Computed over all stored series. Dataset identity combines `source` and "
+            "`dataset_id`. The effective dataset count is `exp(-Σ pᵢ log(pᵢ))`, where `pᵢ` is "
+            "a dataset's share of series within the reported frequency. It equals the number "
+            "of equally sized datasets with the same entropy of series allocation. It does not "
+            "measure subject diversity, statistical independence or the prevalence of duplicates.",
             "",
-            f"| frequency | datasets | effective | largest dataset | its share | top {top_n} share |",
+            f"| Frequency | Datasets | Effective dataset count | Largest dataset | Its series share | Top {top_n} series share |",
             "|---|---:|---:|---|---:|---:|",
         ]
         for r in conc.iter_rows(named=True):
@@ -538,18 +551,23 @@ def render(length: pl.DataFrame, values: pl.DataFrame, conc: pl.DataFrame,
             )
         L += [
             "",
-            "Read this next to [leakage.md](leakage.md): the more concentrated a frequency, the "
-            "more a random train/test split puts near-copies of the same table on both sides. "
-            "`terrastat.dataset.split()` groups by dataset for exactly this reason.",
+            "Large datasets can dominate a uniformly sampled set of series. Grouping folds by "
+            "dataset keeps rows from the same table together, but does not establish independence "
+            "across datasets or sources. `terrastat.dataset.split()` provides dataset grouping; "
+            "forecasting studies also need chronological cutoffs and checks for related series, "
+            "revisions and release timing. See [evaluation considerations](leakage.md) and the "
+            "[quarterly forecasting tutorial](forecasting.md).",
         ]
-    L += ["", "## Where it came from", "", "| source | series | last retrieved |", "|---|---:|---|"]
+    L += ["", "## Sources and retrieval dates", "", "| Source | Stored series | Latest retrieval |", "|---|---:|---|"]
     for r in crawl.iter_rows(named=True):
         L.append(f"| {r['source']} | {_n(r['n_series'])} | {r['last_retrieved'][:19].replace('T', ' ')} |")
     L += [
         "",
-        "A crawl is resumable and rarely finishes in one sitting, so these timestamps differ. "
-        "Licences and attribution are per series, not per source — see the "
-        "[README](../README.md#licences) before redistributing anything.",
+        "Each timestamp is the most recent `retrieved_at` value for that source; it does not "
+        "mean every series was fetched at that time. Resumed crawls can contain different "
+        "retrieval dates. Series metadata records licence classifications and attribution; "
+        "provider terms and dataset-specific exceptions still apply. See "
+        "[licences and citation](licensing.md) before using or redistributing data.",
         "",
     ]
     return "\n".join(L)
@@ -617,9 +635,8 @@ def rerender(out: Path | str = "docs/corpus.md", html: Path | str = "docs/index.
              tables_path: Path | str = TABLES, years: float = MIN_YEARS) -> list[Path]:
     """Rewrite both pages from the committed figures, without touching the corpus.
 
-    Recomputing takes minutes over a billion series; re-rendering takes under a second. Wording,
-    layout and colour are changed far more often than the data is, so they should not share a
-    cost. The figures are whatever the last real run measured, and the pages keep saying so.
+    Re-rendering reads only the saved summary tables. It preserves their computation date and
+    measured values; wording and layout changes do not require rescanning the series layer.
     """
     from terrastat.site import write as write_page
 
@@ -637,10 +654,9 @@ def check(out: Path | str = "docs/corpus.md", html: Path | str = "docs/index.htm
           tables_path: Path | str = TABLES, years: float = MIN_YEARS) -> list[str]:
     """Re-render from the committed tables and report which pages no longer match.
 
-    This does **not** need the corpus, and cannot tell you whether the figures are up to date with
-    a crawl — only the machine holding 30 GB of Parquet can answer that. What it does catch is the
-    failure that actually happens: someone edits a generated page by hand, or changes a renderer
-    and commits the code without regenerating what it produces.
+    This does not need the corpus and cannot establish whether the saved figures reflect the
+    current series layer. It detects manually edited generated pages and renderer changes whose
+    outputs have not been regenerated.
     """
     from terrastat.site import render as render_page
 
