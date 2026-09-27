@@ -97,6 +97,20 @@ list(zip(row["dates"], row["values"]))[:8]
 Keep dates with values: missing periods may be absent from these lists. The modeling tutorial
 reconstructs the calendar and retains those gaps as missing values.
 
+### Get newer observations and revisions
+
+To refresh a dataset already downloaded or deployed as normalized data:
+
+```bash
+uv run --no-sync terrastat refresh eurostat --ids une_rt_q
+```
+
+Omit the provider and IDs to check all locally collected datasets. The first refresh downloads
+a fresh baseline; later Eurostat checks can skip unchanged payloads using validated update
+metadata. FRED and OECD currently download and compare complete datasets. Changed series are
+rebuilt, and a report records additions, removals and revisions. Existing experiment snapshots
+stay unchanged. See [refreshing data](docs/refresh.md) for selection, costs and recovery.
+
 ## 3. Run a forecasting experiment
 
 The [quarterly forecasting notebook](notebooks/quarterly_forecasting.ipynb) takes you through
@@ -144,7 +158,7 @@ The [sharing recipe](MANUAL.md#6b-a-snapshot-for-training-export) explains the e
 | Check source terms or prepare citations | [Licensing and citation](docs/licensing.md) |
 | Understand columns, flags and file layout | [Schema](docs/schema.md) |
 | Design a forecasting evaluation | [Experiment notes](docs/forecasting.md) and [leakage guide](docs/leakage.md) |
-| Know whether a rerun gets new data | [Refresh behavior](docs/refresh.md) |
+| Update collected data or understand resume versus refresh | [Refreshing data](docs/refresh.md) |
 | Store data compactly, transfer it, or restore an archive | [Storage and deployment](docs/storage.md) |
 | Start from normalized data shared online or downloaded manually | [Saved-data deployment](docs/deployment.md) |
 | Look up commands, source behavior or storage details | [Technical reference](docs/reference.md) |
@@ -152,6 +166,7 @@ The [sharing recipe](MANUAL.md#6b-a-snapshot-for-training-export) explains the e
 | Contribute code or review the design | [Contributing](CONTRIBUTING.md) and [design review](docs/design-review.md) |
 
 You can stop a download with Ctrl+C and rerun the same command to resume eligible unfinished
-work. Completed datasets are not automatically refreshed with new observations or revisions.
+work. `run` and ordinary `fetch` do not automatically update completed datasets; use the explicit
+`refresh` command for new observations and revisions.
 
 terrastat is an independent research tool, not an official product of the data providers.

@@ -1,13 +1,35 @@
-"""Command line: terrastat catalog | fetch | series | status | peek."""
+"""Command line: acquire, refresh, inspect and package economic time series."""
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import math
 import sys
 
 from terrastat.config import data_dir
 from terrastat.sources import SOURCES
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
+def _positive_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("must be positive and finite")
+    return number
+
+
+def _nonnegative_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise argparse.ArgumentTypeError("must be nonnegative and finite")
+    return number
 
 
 def _setup_logging(verbose: bool, quiet_console: bool = False) -> None:
@@ -69,10 +91,22 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--max-per-minute", type=int, default=None, help="cap on requests per minute (source default if omitted)")
     f.add_argument("--raw-only", action="store_true", help="download the raw payload only (one request per dataset); run fetch again without this flag to tidy from the local files")
     f.add_argument("--no-raw", action="store_true", help="delete raw payloads after tidying")
-    f.add_argument("--force", action="store_true", help="redo datasets already done")
+    f.add_argument("--reprocess", "--force", dest="force", action="store_true",
+                   help="reprocess completed datasets, possibly from cached raw files; --force is deprecated; use refresh for fresh downloads")
     f.add_argument("--retry-failed", action="store_true", help="retry datasets that failed before")
     f.add_argument("--with-series", action="store_true", help="also build the per-series view right after each dataset")
     f.add_argument("--min-obs", type=int, default=1, help="with --with-series: drop series with fewer non-missing values")
+
+    rf = sub.add_parser("refresh", help="check locally collected datasets for provider updates and rebuild changed series")
+    rf.add_argument("source", nargs="?", choices=SOURCES, help="one provider; default: locally collected providers")
+    rf.add_argument("--sources", nargs="+", choices=SOURCES, help="providers to check; cannot be combined with the positional source")
+    rf.add_argument("--ids", nargs="+", help="local dataset IDs; requires exactly one explicitly selected provider")
+    rf.add_argument("--force", action="store_true", help="download fresh provider payloads even when an update token is unchanged")
+    rf.add_argument("--limit", type=_positive_int, help="check at most this many local datasets")
+    rf.add_argument("--max-hours", type=_positive_float, help="stop checking datasets after this time budget")
+    rf.add_argument("--min-interval", type=_nonnegative_float, help="seconds between requests (provider default if omitted)")
+    rf.add_argument("--max-per-minute", type=_positive_int, help="request cap (provider default if omitted)")
+    rf.add_argument("--json", action="store_true", help="print the complete refresh result as JSON")
 
     s = sub.add_parser("series", help="build the one-row-per-series view from the dataset folders")
     s.add_argument("source", choices=SOURCES)
@@ -177,7 +211,15 @@ def main(argv: list[str] | None = None) -> int:
     dp.add_argument("--cache", help="directory for downloaded archives")
     dp.add_argument("--max-gb", type=float, default=1024.0, help="maximum expanded payload in GiB (default 1024)")
 
-    args = p.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = p.parse_args(raw_argv)
+    if args.cmd == "refresh":
+        if args.source and args.sources:
+            p.error("refresh: use either a positional source or --sources, not both")
+        args.refresh_sources = ([args.source] if args.source else
+                                list(dict.fromkeys(args.sources)) if args.sources else None)
+        if args.ids and (args.refresh_sources is None or len(args.refresh_sources) != 1):
+            p.error("refresh: --ids requires exactly one explicitly selected source")
     if args.cmd in {"pack", "deploy"}:
         # Packing data/ must not create a log file inside the directory being archived.
         import tarfile
@@ -202,7 +244,38 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, EOFError, tarfile.TarError) as exc:
             p.exit(1, f"{args.cmd}: {exc}\n")
         return 0
-    _setup_logging(args.verbose, quiet_console=(args.cmd == "run"))
+    _setup_logging(args.verbose, quiet_console=(args.cmd in {"run", "refresh"}))
+    if args.cmd == "refresh":
+        from terrastat.refresh import run_refresh
+
+        try:
+            result = run_refresh(
+                sources=args.refresh_sources, ids=args.ids, force=args.force,
+                min_interval=args.min_interval, max_per_minute=args.max_per_minute,
+                max_hours=args.max_hours, limit=args.limit,
+            )
+        except KeyboardInterrupt:
+            print("Refresh interrupted; rerun the same command to recover unfinished publication.", file=sys.stderr)
+            return 130
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"refresh: {exc}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(f"Checked {result['checked']}: {result['unchanged']} unchanged, "
+                  f"{result['updated']} updated, {result['failed']} failed.")
+            if result.get("interrupted"):
+                print("Interrupted; rerun to recover unfinished publication and continue checking.")
+            elif result.get("stopped_early"):
+                print("Stopped early; use --ids to select further datasets, or rerun without the limit.")
+            if any(item.get("state_pending") for item in result.get("results", [])):
+                print("Data updated; bookkeeping needs recovery. Rerun refresh before continuing.")
+            if result.get("report"):
+                print(f"Report: {result['report']}")
+        pending = any(item.get("state_pending") for item in result.get("results", []))
+        return 130 if result.get("interrupted") else 1 if result["failed"] or pending else 0
+
     from terrastat import pipeline
 
     if args.cmd == "run":
@@ -253,6 +326,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "fetch":
+        if "--force" in raw_argv:
+            print("Warning: fetch --force is deprecated. Use fetch --reprocess to reuse cached "
+                  "raw data, or terrastat refresh for fresh provider data.", file=sys.stderr)
         cat = pipeline.load_catalog(args.source)
         types = args.types
         if args.source == "eurostat" and types is None:

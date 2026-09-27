@@ -16,6 +16,8 @@ non-commercial purposes with source acknowledgement; a few exceptions exist (see
 from __future__ import annotations
 
 import gzip
+import datetime as dt
+import hashlib
 import io
 import json
 import logging
@@ -77,10 +79,72 @@ LICENSE = License(
 TIME_DIMS = {"time", "time_period"}
 
 
+def _utc_today() -> dt.date:
+    return dt.datetime.now(dt.timezone.utc).date()
+
+
+def _catalogue_date(value: object) -> dt.date | None:
+    """Parse known TOC day formats; unknown markers must not suppress downloads."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(value.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 class EurostatSource(Source):
     name = "eurostat"
     default_min_interval = 3.0  # Eurostat asks users not to parallelise; one slow stream is fine
     default_max_per_minute = 12
+
+    def refresh_token(self, ref: DatasetRef) -> str | None:
+        """A conservative token for unchanged data *and* structure in a fresh TOC.
+
+        Eurostat documents separate last-data-update and last-structure-change
+        fields. Both are required; neither the newest observation period nor the
+        value count alone detects historical revisions. See the official guide:
+        https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-detailed-guidelines/catalogue-api/toc
+
+        TOC dates have day precision, while Eurostat can release twice per day.
+        Markers from today or yesterday (UTC), future dates and unrecognised dates
+        therefore force a download. Older eligible refs have a stable token that
+        also covers the catalogue metadata used in dataset.json. This remains a
+        publisher change hint, not proof that the returned bytes are identical;
+        callers must support forced refreshes.
+        """
+        if ref.source != self.name or not isinstance(ref.extra, dict):
+            return None
+        updated = _catalogue_date(ref.last_updated)
+        structure = _catalogue_date(ref.extra.get("last_structure_change"))
+        cutoff = _utc_today() - dt.timedelta(days=1)
+        if updated is None or structure is None or max(updated, structure) >= cutoff:
+            return None
+        # Explicit stable fields exclude local retrieval/run times. Sorting JSON
+        # keys makes dictionary insertion order immaterial; dimensions retain
+        # their order because it describes the SDMX key layout.
+        metadata_keys = ("type", "data_start", "data_end", "source", "unit",
+                         "short_description", "metadata", "download", "dimensions")
+        try:
+            record = {
+                "source": self.name,
+                "dataset_id": ref.dataset_id,
+                "data_updated": updated.isoformat(),
+                "structure_updated": structure.isoformat(),
+                "title": ref.title,
+                "frequencies": sorted(set(ref.frequencies)),
+                "n_values": ref.n_values,
+                "metadata": {key: ref.extra.get(key) for key in metadata_keys},
+                "paths": sorted(set(ref.extra.get("paths") or [])),
+            }
+            encoded = json.dumps(record, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError):
+            # Malformed/unknown metadata is not evidence that a dataset is unchanged.
+            return None
+        return "eurostat-toc-v1:" + hashlib.sha256(encoded).hexdigest()
 
     # -- catalogue ----------------------------------------------------------------------------
 
@@ -143,7 +207,7 @@ class EurostatSource(Source):
         data_url = f"{SDMX}/data/{code.upper()}?format=TSV&compressed=true"
         tsv_gz = self.fetch_raw(ref, client)[0]
 
-        result = _tidy_tsv(tsv_gz, out / "observations.parquet")
+        result = _tidy_tsv(tsv_gz, out / "observations.parquet", strict=self.strict_refresh)
         if result is None:
             result = {"n_series": 0, "n_obs": 0, "frequencies": [], "used": {}, "flags": set(), "period_min": None, "period_max": None}
 
@@ -151,6 +215,8 @@ class EurostatSource(Source):
         try:
             dsd = self._dsd(code, client)
         except Exception as exc:  # noqa: BLE001
+            if self.strict_refresh:
+                raise
             log.warning("%s: no data structure definition (%s); dimensions kept without labels", code, exc)
             dsd = {"dimensions": [{"id": d, "codelist": None} for d in result["used"]], "attributes": []}
         codelists: dict[str, dict] = {}
@@ -160,6 +226,8 @@ class EurostatSource(Source):
                 try:
                     codelists[key] = self._codelist(key, client)
                 except Exception as exc:  # noqa: BLE001
+                    if self.strict_refresh:
+                        raise
                     log.warning("%s: codelist %s unavailable (%s)", code, key, exc)
                     codelists[key] = {"codes": {}}
         concepts = dsd.get("concepts", {})
@@ -252,6 +320,8 @@ class EurostatSource(Source):
             dsd["concepts"] = _parse_conceptscheme(cs_path)
             cs_path.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001
+            if self.strict_refresh:
+                raise
             log.warning("%s: concept scheme unavailable (%s); dimension ids used as names", code, exc)
             dsd["concepts"] = {}
         write_json(path, dsd)
@@ -403,7 +473,7 @@ def _period_frame(periods: list[str]) -> pl.DataFrame:
     )
 
 
-def _tidy_tsv(tsv_gz: Path, out_path: Path) -> dict | None:
+def _tidy_tsv(tsv_gz: Path, out_path: Path, *, strict: bool = False) -> dict | None:
     """Stream the wide TSV, melt it into the long layout, and write one row group per chunk.
 
     Each TSV row is one series, so every chunk holds whole series and the output file is
@@ -446,6 +516,8 @@ def _tidy_tsv(tsv_gz: Path, out_path: Path) -> dict | None:
                     lines.append(line)
                 if not lines:
                     break
+                if strict and any(len(line.rstrip("\r\n").split("\t")) != ncols + 1 for line in lines):
+                    raise ValueError("Malformed Eurostat TSV row; refusing a partial refresh")
                 buf = io.BytesIO((header_line + "".join(lines)).encode("utf-8"))
                 wide = pl.read_csv(buf, separator="\t", has_header=True, infer_schema=False, quote_char=None, truncate_ragged_lines=True)
                 long = (
@@ -454,7 +526,7 @@ def _tidy_tsv(tsv_gz: Path, out_path: Path) -> dict | None:
                     .unnest("_vf")
                     .rename({"field_0": "_v", "field_1": "flag"})
                     .with_columns(
-                        pl.when(pl.col("_v") == ":").then(None).otherwise(pl.col("_v")).cast(pl.Float64, strict=False).alias("value"),
+                        pl.when(pl.col("_v").is_in([":", ""])).then(None).otherwise(pl.col("_v")).cast(pl.Float64, strict=strict).alias("value"),
                         pl.when(pl.col("flag") == "").then(None).otherwise(pl.col("flag")).alias("flag"),
                     )
                     .filter(pl.col("value").is_not_null() | pl.col("flag").is_not_null())

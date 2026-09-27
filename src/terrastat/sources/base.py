@@ -122,6 +122,8 @@ class DatasetResult:
 
 class Source(abc.ABC):
     name: str = ""
+    # Refresh must not turn tolerated acquisition omissions into deletions.
+    strict_refresh: bool = False
     default_min_interval: float = 2.0
     default_max_per_minute: int | None = 30
 
@@ -134,6 +136,21 @@ class Source(abc.ABC):
 
     def headers(self) -> dict:
         return {}
+
+    def refresh_token(self, ref: DatasetRef) -> str | None:
+        """Return a source-supported change token, or ``None`` to fetch afresh.
+
+        A nonempty catalogue timestamp is not automatically an update watermark:
+        for example, FRED's real-time period start and an OECD dataflow version do
+        not establish that observations are unchanged. Subclasses opt in only
+        when their catalogue describes both data and relevant structural changes.
+
+        The caller must obtain a fresh catalogue and persist a token only after a
+        successful fresh download. Legacy dataset metadata is not such proof.
+        Equality is a publisher-supported optimisation, not a content checksum;
+        an explicit force option must still be able to bypass it.
+        """
+        return None
 
     @abc.abstractmethod
     def catalog(self, client: PoliteClient) -> pl.DataFrame:

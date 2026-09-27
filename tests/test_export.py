@@ -1,5 +1,8 @@
 import datetime as dt
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 import polars as pl
 import pyarrow.parquet as pq
@@ -124,3 +127,174 @@ def test_invalid_storage_settings_fail_before_export_changes_any_files(tmp_path,
     with pytest.raises(ValueError):
         export_shards("existing", **options)
     assert target.read_bytes() == b"original"
+
+
+@pytest.fixture
+def existing_snapshot(tmp_path, monkeypatch):
+    from terrastat.export import export_shards
+
+    monkeypatch.setenv("TERRASTAT_DATA_DIR", str(tmp_path))
+    source = tmp_path / "series/eurostat/freq=M/ds.parquet"
+    source.parent.mkdir(parents=True)
+    _fake_series(30, "eurostat", "ds", "eurostat-reuse", None).write_parquet(source)
+    export_shards("existing", target_mb=0.004)
+    return tmp_path / "snapshot/existing"
+
+
+def _snapshot_bytes(directory):
+    return {p.name: p.read_bytes() for p in directory.iterdir() if p.is_file()}
+
+
+@pytest.mark.parametrize("failure", ["empty", "notes", "checksum", "index_rows"])
+def test_failed_replacement_preserves_every_original_file(existing_snapshot, monkeypatch, failure):
+    from terrastat import export, croissant
+
+    before = _snapshot_bytes(existing_snapshot)
+    options = {}
+    if failure == "empty":
+        options["min_obs"] = 1000
+    elif failure == "notes":
+        def fail_notes(*args):
+            raise OSError("injected documentation write failure")
+        monkeypatch.setattr(export, "_write_release_notes", fail_notes)
+    elif failure == "checksum":
+        original = croissant.write
+        def corrupt_after_writing(out, manifest):
+            original(out, manifest)
+            with (out / manifest["shards"][0]["file"]).open("ab") as stream:
+                stream.write(b"corrupt")
+        monkeypatch.setattr(croissant, "write", corrupt_after_writing)
+    else:
+        original = export.write_parquet
+        monkeypatch.setattr(export, "write_parquet", lambda df, path: original(df.head(0), path))
+    with pytest.raises((OSError, ValueError, RuntimeError)):
+        export.export_shards("existing", **options)
+    assert _snapshot_bytes(existing_snapshot) == before
+    assert not (existing_snapshot.parent / ".existing.export-staging").exists()
+    assert not (existing_snapshot.parent / ".existing.export-backup").exists()
+
+
+def test_successful_replacement_is_complete_and_removes_obsolete_shards(existing_snapshot, monkeypatch):
+    from terrastat import export, datasets
+
+    before = _snapshot_bytes(existing_snapshot)
+    original = export._verify_export
+    verified = []
+    def verify_while_original_is_still_published(staging, expected_rows=None):
+        assert _snapshot_bytes(existing_snapshot) == before
+        original(staging, expected_rows)
+        verified.append(True)
+    monkeypatch.setattr(export, "_verify_export", verify_while_original_is_still_published)
+    result = export.export_shards("existing", per_file_cap=7)
+    assert verified and result["rows"] == 7
+    assert datasets.verify(existing_snapshot)["complete"]
+    assert len(list(existing_snapshot.glob("shard-*.parquet"))) == result["n_shards"] == 1
+    assert pl.read_parquet(existing_snapshot / "index.parquet").height == 7
+    assert not (existing_snapshot.parent / ".existing.export-backup").exists()
+
+
+def test_publish_rename_failure_rolls_back_original(existing_snapshot, monkeypatch):
+    from terrastat.export import export_shards
+
+    before = _snapshot_bytes(existing_snapshot)
+    original = Path.rename
+    def fail_publish(path, target):
+        if path.name == ".existing.export-staging":
+            raise PermissionError("injected locked destination")
+        return original(path, target)
+    monkeypatch.setattr(Path, "rename", fail_publish)
+    with pytest.raises(PermissionError, match="injected"):
+        export_shards("existing", per_file_cap=7)
+    assert _snapshot_bytes(existing_snapshot) == before
+    assert not (existing_snapshot.parent / ".existing.export-backup").exists()
+
+
+@pytest.mark.parametrize("phase", ["build", "after_backup", "after_publish"])
+def test_killed_export_recovers_on_next_attempt(existing_snapshot, phase):
+    from terrastat import export, datasets
+
+    before = _snapshot_bytes(existing_snapshot)
+    script = r'''
+import os
+from pathlib import Path
+import sys
+from terrastat import export
+phase = sys.argv[1]
+original = Path.rename
+def interrupted_rename(path, target):
+    result = original(path, target)
+    if ((phase == "after_backup" and Path(target).name == ".existing.export-backup")
+            or (phase == "after_publish" and path.name == ".existing.export-staging")):
+        os._exit(73)
+    return result
+Path.rename = interrupted_rename
+if phase == "build":
+    export._write_release_notes = lambda *args: os._exit(73)
+export.export_shards("existing", per_file_cap=7)
+'''
+    child = subprocess.run([sys.executable, "-c", script, phase], capture_output=True, text=True, timeout=30)
+    assert child.returncode == 73, child.stderr
+    backup = existing_snapshot.parent / ".existing.export-backup"
+    if phase == "after_backup":
+        assert not existing_snapshot.exists()
+        assert _snapshot_bytes(backup) == before
+    elif phase == "build":
+        assert _snapshot_bytes(existing_snapshot) == before
+    else:
+        assert _snapshot_bytes(backup) == before
+        assert datasets.verify(existing_snapshot)["complete"]
+    published = _snapshot_bytes(existing_snapshot) if existing_snapshot.exists() else before
+    # Recovery happens before this intentionally empty new build; no third release is published.
+    with pytest.raises(RuntimeError, match="filters leave no series"):
+        export.export_shards("existing", min_obs=1000)
+    assert _snapshot_bytes(existing_snapshot) == published
+    assert not backup.exists()
+    assert not (existing_snapshot.parent / ".existing.export-staging").exists()
+
+
+def test_damaged_published_copy_keeps_recovery_backup(existing_snapshot):
+    from terrastat import export
+    import shutil
+
+    before = _snapshot_bytes(existing_snapshot)
+    backup = existing_snapshot.parent / ".existing.export-backup"
+    shutil.copytree(existing_snapshot, backup)
+    (existing_snapshot / "index.parquet").write_bytes(b"damaged")
+    with pytest.raises(RuntimeError, match="previous copy retained"):
+        export.export_shards("existing")
+    assert _snapshot_bytes(backup) == before
+
+
+def test_second_export_cannot_touch_active_writer_files(existing_snapshot):
+    from terrastat.export import export_shards
+    from terrastat.locking import exclusive_lock
+
+    before = _snapshot_bytes(existing_snapshot)
+    staging = existing_snapshot.parent / ".existing.export-staging"
+    staging.mkdir()
+    (staging / "in-progress").write_bytes(b"active")
+    with exclusive_lock(existing_snapshot.parent / ".existing.export.lock"):
+        with pytest.raises(RuntimeError, match="writer lock"):
+            export_shards("existing")
+    assert (staging / "in-progress").read_bytes() == b"active"
+    assert _snapshot_bytes(existing_snapshot) == before
+
+
+def test_unmanaged_files_are_not_deleted_by_replacement(existing_snapshot):
+    from terrastat.export import export_shards
+
+    (existing_snapshot / "research-notes.md").write_text("Keep these notes", encoding="utf-8")
+    before = _snapshot_bytes(existing_snapshot)
+    with pytest.raises(ValueError, match="unmanaged"):
+        export_shards("existing")
+    assert _snapshot_bytes(existing_snapshot) == before
+
+
+@pytest.mark.parametrize("name", ["../outside", "a/b", r"a\b", ".", "..", "CON", "x.", "a:b"])
+def test_export_name_cannot_escape_snapshot_root(tmp_path, monkeypatch, name):
+    from terrastat.export import export_shards
+
+    monkeypatch.setenv("TERRASTAT_DATA_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="single portable"):
+        export_shards(name)
+    assert not (tmp_path / "snapshot").exists()

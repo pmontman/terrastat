@@ -244,6 +244,8 @@ class FredSource(Source):
                         try:
                             fv = float(v)
                         except ValueError:
+                            if self.strict_refresh:
+                                raise ValueError("Invalid FRED numerical observation; refusing a partial refresh") from None
                             rec["n_missing"] += 1
                             continue
                         d = o["date"]

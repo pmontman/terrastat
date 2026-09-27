@@ -13,6 +13,45 @@ The largest disk saving comes from choosing which **layers** need to be on your 
 An extra compressor around already compressed files usually saves little. Do not replace your
 only copy of a research dataset until you have verified its archive and tested restoration.
 
+## Build and replace a snapshot
+
+`terrastat export NAME` builds a selection from the local series layer. Use a new release name
+for a new experiment or shared dataset. Exporting to an existing name requests replacement;
+merely installing or running the updated package does not rewrite existing snapshots.
+Names must be single portable directory names, such as `public_v1`. An existing destination
+with additional user files is not replaced; use a new name to retain those files.
+
+The exporter builds the complete replacement in `.<name>.export-staging` beside its destination,
+including shards, index and release metadata. It verifies sizes, checksums, Parquet row counts
+and columns, and metadata completeness before changing the
+published snapshot. A failed build or verification therefore leaves an existing snapshot intact.
+An operating-system lock excludes another export to the same destination. It does not lock the
+input series layer: pause writers to that input while exporting. Lock conflicts fail instead of
+waiting; rerun the command after the active operation finishes.
+
+For replacement, the existing directory is renamed to `.<name>.export-backup`, then the verified
+staging directory is renamed to the destination. A publication error attempts to restore the old
+directory. If the process terminates during publication, rerun the export for the same name:
+
+- If the destination is absent and the backup exists, the previous snapshot is restored.
+- If both exist, the destination is verified before the backup is removed. A failed verification
+  preserves both copies and reports the paths for investigation.
+- Abandoned staging data is removed before the requested export is rebuilt.
+
+Do not manually remove those reserved directories. The `.<name>.export.lock` file is intentionally
+persistent; its presence does not mean that a process still holds the lock, and deleting it is
+not a recovery step.
+
+This sequence is recoverable but the two renames do not provide an uninterrupted directory
+replacement for active readers. Use different release names while notebooks are reading an
+existing snapshot. Neither this protocol nor file checksums guarantee recovery from every
+power failure or filesystem fault.
+
+Budget space for **the old snapshot, the new snapshot and intermediate shuffle files**. Staging
+uses the destination's filesystem; space for only one final copy is insufficient when replacing
+an existing release. The backup is removed after successful publication and cleanup. A fresh
+release name also keeps the previous version available for reproducibility.
+
 ## Pack and restore an existing snapshot
 
 Stop any process writing to the selected directory, then run from the repository root:
@@ -214,7 +253,9 @@ uv run --no-sync terrastat export compact_v1 --public-only --per-dataset 100 --r
 The larger row groups and codec level are recorded in its manifest. Shuffling, index positions
 and value precision follow the same export settings as before. This is still ordinary Parquet;
 it can be read directly or packed and deployed. Existing snapshots and default export settings
-are unchanged. Use a new name: the older export command replaces an existing named snapshot.
+are unchanged unless you request a replacement. Use a new release name to retain the previous
+version; [snapshot replacement](#build-and-replace-a-snapshot) explains verification, recovery
+and temporary disk requirements.
 
 The broader PyArrow streaming experiment (row groups capped near 128 MiB and 65,536 rows)
 confirms that results depend on the data: level 9 saved 16.2% on `demo_bundle` and 24.1% on

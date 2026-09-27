@@ -277,6 +277,8 @@ class OecdSource(Source):
                 # too big by our own cap, or by theirs (HTTP 413): halve the batch either way
                 part.unlink(missing_ok=True)
                 if len(batch) == 1:
+                    if self.strict_refresh:
+                        raise TooLarge("A required OECD slice exceeds the download limit; refusing a partial refresh")
                     log.warning("%s: %s=%s alone is too large to fetch; skipped", did, struct["split_dim"], batch[0])
                     state["skipped"].append(batch[0])
                     state["done_codes"].append(batch[0])
@@ -312,7 +314,12 @@ class OecdSource(Source):
         url = DATA_URL.format(agency=agency, flow=flow, version=version)
         parts = self.fetch_raw(ref, client)
 
-        result = _tidy_csv(parts, out / "observations.parquet")
+        if self.strict_refresh and (raw / "_parts.json").exists():
+            checkpoint = read_json(raw / "_parts.json")
+            if not checkpoint.get("complete") or checkpoint.get("skipped"):
+                raise ValueError("Incomplete OECD slices; refusing a partial refresh")
+
+        result = _tidy_csv(parts, out / "observations.parquet", strict=self.strict_refresh)
         if result.get("bad_rows"):
             log.warning("%s: %d malformed CSV rows skipped", did, result["bad_rows"])
         dims = [Dimension(id=d, name=result["dim_names"][d], codes=result["labels"].get(d, {})).__dict__ for d in result["dims"]]
@@ -405,7 +412,7 @@ def _csv_header(csv_gz: Path) -> list[str]:
         return [c.strip() for c in next(csv.reader(fh))]
 
 
-def _tidy_csv(sources: Path | list, out_path: Path) -> dict:
+def _tidy_csv(sources: Path | list, out_path: Path, *, strict: bool = False) -> dict:
     """Stream one or more labelled CSVs into the long layout, then sort by series.
 
     Nothing is ever fully in memory: each CSV is read in blocks, every block is written straight
@@ -459,7 +466,7 @@ def _tidy_csv(sources: Path | list, out_path: Path) -> dict:
             where = f"row {row.number}" if row.number is not None else "a row (position unknown in a blocked read)"
             log.warning("%s: skipping malformed CSV %s (%s columns, expected %s)",
                         out_path.parent.name, where, row.actual_columns, row.expected_columns)
-        return "skip"
+        return "error" if strict else "skip"
 
     # newlines_in_values: some free-text labels and comments carry a line break, and without this
     # the parser reads the fragment before it as a short row and rejects it
@@ -499,7 +506,7 @@ def _tidy_csv(sources: Path | list, out_path: Path) -> dict:
                 df.select(dims + ["TIME_PERIOD", "OBS_VALUE"] + [a for a in attrs if a in df.columns])
                 .rename({c: s for c, s in safe.items() if c != s})
                 .rename({"TIME_PERIOD": "period", "OBS_VALUE": "_v"})
-                .with_columns(pl.col("_v").cast(pl.Float64, strict=False).alias("value"))
+                .with_columns(pl.col("_v").replace("", None).cast(pl.Float64, strict=strict).alias("value"))
                 .join(pframe, on="period", how="left")
                 .with_columns(pl.concat_str([pl.col(d).fill_null("") for d in sdims], separator=".").alias("series_key"))
             )

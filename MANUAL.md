@@ -10,6 +10,7 @@ keeps the detailed storage and source notes.
 | Find a dataset and download it | [Catalogue](#catalog-the-list-of-all-tables), [fetch](#fetch-the-crawl), and [recipes](#4-recipes) |
 | Understand the files | [Reading the data](#6-reading-the-data) and [schema](docs/schema.md) |
 | Stop or resume a download | [Recovery](#5-stopping-resuming-failures) |
+| Update collected observations and revisions | [Refresh](#refresh-update-collected-data) |
 | Prepare a snapshot | [Export](#6b-a-snapshot-for-training-export) |
 | Use a saved normalized release, online or downloaded manually | [Saved-data deployment](docs/deployment.md) |
 | Explore or train a model | [Notebooks](#6c-the-notebooks) |
@@ -137,8 +138,9 @@ window open; the three progress bars show where each source is. What to expect:
   shows the same numbers from another window at any time.
 - Failures are retried once at the end of each source; `terrastat status <source>` lists any
   that remain, with the reason.
-- It is done when the last lines say `0 remaining` for every source. Running it again then does
-  nothing (except picking up datasets the sources have added since).
+- It is done when the last lines say `0 remaining` for every source. A rerun resumes eligible
+  unfinished work; it does not update completed observations. Use `refresh` for collected data,
+  or refresh the catalogue and use `fetch` to acquire newly listed datasets.
 
 The commands below let you choose individual datasets and inspect each stage. For a first
 experiment, a targeted `fetch` is usually enough; you do not need a full crawl.
@@ -154,7 +156,9 @@ Downloads the source's full table of contents once (about a minute for Eurostat)
 prints a preview. With `--csv` you also get the whole list as a spreadsheet: id, title,
 frequencies, size, last update, and a `status` column that says `todo`, `raw`, `done` or `failed`
 for each table. Open it in Excel to see what exists and what has been fetched. Add `--refresh`
-to re-download the catalogue (the cached copy is reused if it is less than a day old).
+to rebuild the catalogue. Source adapters may still reuse catalogue payloads cached for less
+than a day; this does not update observations already stored on disk. The separate `refresh`
+command bypasses those cached catalogue payloads when checking collected datasets.
 
 ### `fetch`, the crawl
 
@@ -175,7 +179,8 @@ The options you will actually use:
 | `--limit 50` | stop after 50 new datasets |
 | `--max-values N` | skip datasets larger than N stored values (Eurostat, size known up front) |
 | `--retry-failed` | try again the datasets that failed before |
-| `--force` | reprocess datasets already done; cached raw data can still be reused |
+| `--reprocess` | reprocess datasets already done; cached raw data can still be reused |
+| `--force` | deprecated spelling of `--reprocess`; use `refresh` for fresh provider data |
 | `--min-interval 5 --max-per-minute 6` | be even slower than the defaults |
 
 The progress bar shows the dataset being processed. Each finished dataset is recorded at once,
@@ -191,6 +196,40 @@ Default pacing, chosen to stay well inside each source's fair-use terms:
 
 Never run two fetches of the same source at the same time; one connection per source is the
 whole point.
+
+### `refresh`: update collected data
+
+```powershell
+terrastat refresh eurostat --ids une_rt_q
+terrastat refresh --sources eurostat oecd
+terrastat refresh --limit 10 --max-hours 2
+```
+
+The command checks existing normalized datasets, including those restored manually, and
+rebuilds changed series with `min_obs=1`. It does not discover new datasets or overwrite any
+saved snapshot. Use one positional provider or `--sources`; `--ids` requires a single explicitly
+selected provider. Omit both provider selectors to check all locally collected providers.
+
+The first refresh downloads a fresh baseline for each selected dataset. Subsequent Eurostat
+checks read a fresh catalogue and may skip the payload when its update token and the recorded
+local baseline are still valid. FRED and OECD currently download complete payloads and compare
+them with the stored data. `refresh --force` requests fresh payloads even when the Eurostat
+token is unchanged. These are dataset-level checks, not per-observation delta downloads.
+
+The final summary reports checked, unchanged, updated and failed datasets, and gives the JSON
+report path under `data\refresh\reports\`. Use `--json` for machine-readable output. Reports
+include additions, removals and revisions; a revised record has changed numerical values or
+flags at an existing `(series_key, period)` key. Date, dimension and metadata changes are also
+considered. `--min-interval` and `--max-per-minute` override the provider's request pacing.
+
+Pause other writers and readers of the affected source while refreshing. Replacements are
+prepared and checked before publication; download, parsing and validation failures retain the
+previous data. Interrupted publication is recovered on the next refresh. If publication succeeded
+but state bookkeeping failed, the report marks that separately and asks for recovery. There can
+be a brief reader gap while related
+directories are switched. Existing snapshots remain fixed, so export a new name when you want
+an updated experimental release. See [refreshing data](docs/refresh.md) for the complete
+provider behavior, raw-data retention and recovery contract.
 
 ### `tags`, the FRED analyst tags
 
@@ -277,12 +316,30 @@ terrastat fetch eurostat --ids nama_10_gdp irt_st_m --with-series
 - Start again with the same command. Datasets already finished are skipped; the one that was in
   progress is redone from scratch (it left only a `.part` file). FRED releases resume at the page
   where they stopped.
-- The record of what is done lives in `data\state\<source>.jsonl`, one line per dataset. Deleting
-  a line makes that dataset eligible again; deleting the file restarts the source.
+- The record of what is done lives in `data\state\<source>.jsonl`, one line per event. The last
+  event for a dataset determines its current status. Keep this log when moving a crawl; use
+  `--retry-failed` or `fetch --reprocess` for deliberate reprocessing rather than editing its
+  lines. Reprocessing can reuse cached raw data. Use `refresh` for fresh provider data; see
+  [refreshing data](docs/refresh.md).
 - A dataset that fails is recorded with its error and skipped on later runs. See the first
   failures in `status`; retry them with `fetch ... --retry-failed`. `run` already makes one
   retry pass per source at the end, so a transient failure usually clears itself.
 - The logs are in `data\logs\terrastat.log`.
+
+If an interrupted state append leaves an incomplete final JSON object without a newline, the
+next state operation reports and removes that incomplete tail while retaining earlier records.
+A valid final JSON record without a newline is retained. Malformed newline-terminated records,
+complete but malformed final records, corruption earlier in the log and invalid event records
+remain errors; they are not silently skipped. Keep a copy of a log that reports such an error
+before investigating it.
+
+State-log operations are locked, and new events are flushed to disk before their in-memory
+status changes. This protects individual log operations; it does not make simultaneous crawls
+or series builds against the same source safe. Continue to run one writer per source. A competing
+operation reports a writer-lock error instead of waiting; rerun it after the active operation
+finishes. `data\state\<source>.jsonl.lock` remains after a command exits: the operating system
+releases the lock, so an existing lock file is normal and should not be deleted to bypass a
+running command.
 
 Each line in the state file carries one of these statuses:
 
@@ -351,7 +408,11 @@ order; `values` can hold a null where the source published only a flag.
 ## 6b. A snapshot for training: `export`
 
 An export packages local data for an experiment or replication archive. Use a new name for
-each release: exporting to an existing name replaces its shards.
+each release so an experiment continues to refer to the same files. Exporting to an existing
+name deliberately replaces that snapshot after its replacement has been built and verified.
+Names must be a single portable directory name, such as `public_v1`; path separators and
+reserved system names are rejected. If the existing snapshot contains additional user files,
+choose a new name rather than removing those files to force replacement.
 
 For data you intend to share, start with `--public-only` and review the
 [licensing and citation guide](docs/licensing.md). The flag selects Eurostat, OECD and the
@@ -386,6 +447,36 @@ A training loop reads one shard at a time, so memory stays flat on a laptop. Opt
 `--sources fred eurostat`, `--freq M`, `--license-ids ...`, `--target-mb`, `--seed`,
 `--float64`, `--columns` (keep only some columns). The notebook in `notebooks\` shows how to
 iterate the shards into batches.
+
+### Replacement, interruption and disk space
+
+Exports build shards, their lookup index and release metadata in a sibling staging directory,
+then verify file sizes and checksums, Parquet row counts and columns, and the release metadata
+before publication. An error during building or verification
+leaves an existing snapshot unchanged. Export operations for the same destination are locked.
+Pause any process modifying the input series while exporting; the destination lock does not
+lock the crawler or make a changing input tree a consistent snapshot.
+
+Replacing a directory uses two renames: the existing snapshot moves to a backup, then the
+verified staging directory moves into its place. An ordinary publication failure attempts to
+restore the backup. If the process terminates between those steps, rerunning the export for
+the same name recovers the interrupted publication before starting another build. Keep the
+reserved `.<name>.export-staging` and `.<name>.export-backup` directories for that recovery;
+do not repurpose or remove them manually. If the destination is absent, its backup is restored. If both
+the destination and backup exist, the destination is verified before the backup is removed;
+a verification failure retains both and requires investigation. Abandoned staging data is
+discarded and the requested export is rebuilt. The persistent `.<name>.export.lock` file is
+normal, including after an interrupted process; its operating-system lock is released on exit.
+
+The two-renaming sequence can briefly leave the destination path unavailable. Existing readers
+are not coordinated with it, so use a fresh release name when notebooks or other readers are
+active. This is recoverable replacement, not a guarantee of uninterrupted reads or protection
+against every filesystem or power failure.
+
+Allow free space for the new snapshot and intermediate shuffle files **in addition to** the
+old snapshot. The staging and backup directories share the destination's filesystem. After
+successful publication and cleanup, only the new snapshot and the persistent lock file remain.
+Existing snapshots are not rebuilt or migrated unless you explicitly export to their names.
 
 ### Archive a snapshot and deploy it elsewhere
 
@@ -702,4 +793,4 @@ provider links, the meaning of `--public-only`, and what to include in a researc
 | a dataset keeps failing with `413` or a timeout | too big for one request; skip it for now |
 | disk filling up | raw payloads are kept by default; `--no-raw` deletes them after tidying, or set `TERRASTAT_DATA_DIR` to a bigger drive in `.env` |
 | strange characters in titles in the console | the console font; the files are UTF-8 and correct |
-| a rerun did not fetch newer observations | resuming is not refreshing; see [refresh behavior](docs/refresh.md) before changing state or cached files |
+| a rerun did not fetch newer observations | `run` and ordinary `fetch` resume work; use `terrastat refresh` to update collected datasets, as described in [refreshing data](docs/refresh.md) |

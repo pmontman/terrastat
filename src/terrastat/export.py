@@ -22,7 +22,11 @@ import hashlib
 import json
 import logging
 import math
+import os
 from pathlib import Path
+import re
+import shutil
+import stat
 
 import numpy as np
 import polars as pl
@@ -31,6 +35,7 @@ import pyarrow.parquet as pq
 
 from terrastat import __version__
 from terrastat.config import data_dir
+from terrastat.locking import exclusive_lock
 from terrastat.series import SERIES_SCHEMA
 from terrastat.storage import series_dir, write_json, write_parquet
 
@@ -51,6 +56,141 @@ def _sha256(path: Path) -> str:
 
 def snapshot_dir(name: str) -> Path:
     return data_dir() / "snapshot" / name
+
+
+def _export_paths(name: str) -> tuple[Path, Path, Path, Path]:
+    # All moves and recursive cleanup must remain inside one resolved snapshot root.
+    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+            or name.endswith(".") or name.split(".")[0].upper() in
+            {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+             *(f"LPT{i}" for i in range(1, 10))}):
+        raise ValueError("snapshot name must be a single portable directory name")
+    root = (data_dir() / "snapshot").resolve()
+    return (root / name, root / f".{name}.export-staging",
+            root / f".{name}.export-backup", root / f".{name}.export.lock")
+
+
+def _check_export_directory(path: Path, parent: Path) -> None:
+    if path.parent != parent or path.resolve().parent != parent:
+        raise ValueError(f"Export path escapes snapshot directory: {path}")
+    if not path.exists() and not path.is_symlink():
+        return
+    info = path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or path.is_symlink()
+            or getattr(info, "st_file_attributes", 0) & 0x400):
+        raise ValueError(f"Export requires a plain directory, not a link or file: {path}")
+
+
+def _remove_export_directory(path: Path, parent: Path) -> None:
+    _check_export_directory(path, parent)
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _check_replaceable_snapshot(out: Path) -> None:
+    """Do not discard files the exporter does not own when retiring a snapshot."""
+    if not out.exists():
+        return
+    metadata = {"index.parquet", "manifest.json", "README.md", "ATTRIBUTIONS.md", "croissant.json"}
+    unexpected = []
+    for path in out.iterdir():
+        info = path.lstat()
+        if ((path.name not in metadata and not re.fullmatch(r"shard-\d+\.(parquet|tmp)", path.name))
+                or not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400):
+            unexpected.append(path.name)
+    if unexpected:
+        raise ValueError(f"Snapshot contains unmanaged entries {unexpected}; use a new snapshot name: {out}")
+
+
+def _sync_directory(path: Path) -> None:
+    """Persist rename ordering where directory fsync is supported (not Windows)."""
+    if os.name != "nt":
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _verify_export(out: Path, expected_rows: int | None = None) -> None:
+    """Read back the complete release before changing the published directory."""
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    entries = manifest["shards"] + [manifest["index"]]
+    names = [entry["file"] for entry in entries]
+    if (len(names) != len(set(names)) or manifest["n_shards"] != len(manifest["shards"])
+            or manifest["index"]["file"] != "index.parquet"
+            or any(not re.fullmatch(r"shard-\d{5,}\.parquet", e["file"]) for e in manifest["shards"])):
+        raise ValueError("Invalid snapshot file inventory")
+    expected_files = set(names) | {"manifest.json", "README.md", "ATTRIBUTIONS.md", "croissant.json"}
+    if {p.name for p in out.iterdir()} != expected_files:
+        raise ValueError("Snapshot contains missing, unexpected or unfinished files")
+    for path in out.iterdir():
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError(f"Snapshot member must be a regular file: {path}")
+        if info.st_size == 0:
+            raise ValueError(f"Empty snapshot file: {path}")
+    total_rows = 0
+    for entry in entries:
+        path = out / entry["file"]
+        if path.stat().st_size != entry["bytes"] or _sha256(path) != entry["sha256"]:
+            raise ValueError(f"Snapshot checksum or size mismatch: {path.name}")
+        with pq.ParquetFile(path) as parquet:
+            rows = parquet.metadata.num_rows
+            if entry is manifest["index"]:
+                if rows != manifest["rows"]:
+                    raise ValueError("Snapshot index row count does not match manifest")
+            else:
+                if rows != entry["rows"] or parquet.schema_arrow.names != manifest["columns"]:
+                    raise ValueError(f"Snapshot row count or columns mismatch: {path.name}")
+                total_rows += rows
+    if total_rows != manifest["rows"] or (expected_rows is not None and total_rows != expected_rows):
+        raise ValueError("Snapshot row count does not match the selected input")
+    if sum(e["bytes"] for e in manifest["shards"]) != manifest["bytes"]:
+        raise ValueError("Snapshot byte count does not match manifest")
+    json.loads((out / "croissant.json").read_text(encoding="utf-8"))
+
+
+def _recover_export(out: Path, staging: Path, backup: Path) -> None:
+    """Recover a killed publisher while holding this snapshot's writer lock."""
+    for path in (out, staging, backup):
+        _check_export_directory(path, out.parent)
+    if backup.exists():
+        if not out.exists():
+            backup.rename(out)
+            _sync_directory(out.parent)
+            log.warning("Restored previous snapshot after interrupted export: %s", out)
+        else:
+            # A previous process published the new directory but stopped before cleanup.
+            # If that release is damaged, retain both copies for explicit recovery.
+            try:
+                _verify_export(out)
+            except (OSError, ValueError, KeyError) as exc:
+                raise RuntimeError(f"Cannot verify published snapshot {out}; previous copy retained at {backup}") from exc
+            _check_replaceable_snapshot(backup)
+            _remove_export_directory(backup, out.parent)
+    _remove_export_directory(staging, out.parent)
+
+
+def _publish_export(out: Path, staging: Path, backup: Path) -> None:
+    moved_old = False
+    try:
+        if out.exists():
+            out.rename(backup)
+            moved_old = True
+            _sync_directory(out.parent)
+        staging.rename(out)
+    except BaseException:
+        if moved_old and not out.exists():
+            backup.rename(out)
+            _sync_directory(out.parent)
+        raise
+    _sync_directory(out.parent)
+    try:
+        _remove_export_directory(backup, out.parent)
+    except OSError:
+        # Publication succeeded. Retain the backup and let the next export retry cleanup.
+        log.warning("Snapshot published; previous copy retained at %s", backup, exc_info=True)
 
 
 def _selection_filter(min_obs: int, license_ids: list[str] | None, public_only: bool) -> pl.Expr:
@@ -96,6 +236,55 @@ def export_shards(
     row_group_rows: int = ROW_GROUP_ROWS,
     compression_level: int = 3,
 ) -> dict:
+    """Build and verify a complete snapshot before replacing the existing directory.
+
+    Replacement uses two directory renames on local filesystems, with rollback and
+    next-run recovery. Use distinct release names for concurrent readers. Internal
+    staging, backup and writer-lock paths are reserved beside the snapshot.
+    """
+    options = locals().copy()
+    if type(row_group_rows) is not int or row_group_rows < 1:
+        raise ValueError("row_group_rows must be a positive integer")
+    if type(compression_level) is not int or not 1 <= compression_level <= 22:
+        raise ValueError("compression_level must be an integer from 1 to 22")
+    if not math.isfinite(target_mb) or target_mb <= 0:
+        raise ValueError("target_mb must be positive and finite")
+    out, staging, backup, lock = _export_paths(name)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_lock(lock):
+        _recover_export(out, staging, backup)
+        _check_replaceable_snapshot(out)
+        staging.mkdir()
+        try:
+            manifest = _build_shards(staging, **options)
+            _verify_export(staging, expected_rows=manifest["rows"])
+            for path in staging.iterdir():
+                with path.open("r+b") as stream:
+                    os.fsync(stream.fileno())
+            _sync_directory(staging)
+            _publish_export(out, staging, backup)
+            return manifest
+        finally:
+            _remove_export_directory(staging, out.parent)
+
+
+def _build_shards(
+    out: Path,
+    name: str,
+    sources: list[str] | None = None,
+    freqs: list[str] | None = None,
+    min_obs: int = 1,
+    license_ids: list[str] | None = None,
+    public_only: bool = False,
+    target_mb: float = 128.0,
+    seed: int = 0,
+    float32: bool = True,
+    columns: list[str] | None = None,
+    limit_rows: int | None = None,
+    per_file_cap: int | None = None,
+    row_group_rows: int = ROW_GROUP_ROWS,
+    compression_level: int = 3,
+) -> dict:
     """Build ``data/snapshot/<name>/``. Returns the manifest.
 
     ``limit_rows`` truncates: it stops once the total is reached, so it takes whole datasets in
@@ -112,10 +301,6 @@ def export_shards(
     files = _input_files(sources, freqs)
     if not files:
         raise RuntimeError("no series files found; run `terrastat series <source>` first")
-    out = snapshot_dir(name)
-    out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("shard-*.parquet"):
-        old.unlink()
     flt = _selection_filter(min_obs, license_ids, public_only)
     cols = list(columns) if columns else list(SERIES_SCHEMA)
     for required in ("series_uid",):
@@ -198,6 +383,8 @@ def export_shards(
                 for k, v in df.group_by(c).len().iter_rows():
                     counts[c][str(k)] = counts[c].get(str(k), 0) + int(v)
     index = pl.concat(index_parts, how="vertical_relaxed")
+    if index.height != total_rows:
+        raise ValueError("Selected inputs changed during export; retry with a stable series layer")
     write_parquet(index, out / "index.parquet")
 
     manifest = {

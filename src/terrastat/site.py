@@ -697,8 +697,10 @@ terrastat fetch eurostat --ids une_rt_q --with-series
 terrastat peek eurostat une_rt_q</pre>
         <p>The <a href="{_e(repo)}/blob/master/MANUAL.md">manual</a> covers dataset discovery,
         larger collections, FRED key configuration and interruption recovery. Rerunning a crawl
-        resumes unfinished work; it does not automatically refresh completed datasets.
-        See <a href="{_e(repo)}/blob/master/docs/refresh.md">refresh behavior</a>.</p>
+        resumes unfinished work. Use <code>terrastat refresh eurostat --ids une_rt_q</code>
+        to check an existing local dataset for newer observations and revisions; saved snapshots
+        remain unchanged. See <a href="{_e(repo)}/blob/master/docs/refresh.md">refreshing data</a>
+        for provider-specific download behavior and recovery.</p>
       </div>
     </div>
   </section>

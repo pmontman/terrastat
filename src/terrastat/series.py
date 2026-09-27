@@ -38,7 +38,7 @@ FREQ_TAGS = {
     "A": "annual",
     "P": "5 year (freq)",
 }
-_TAGS_CACHE: dict = {"mtime": None, "table": None, "notes": None}
+_TAGS_CACHE: dict = {"path": None, "mtime": None, "table": None, "notes": None}
 
 
 def _fred_tags():
@@ -47,8 +47,8 @@ def _fred_tags():
 
     p = series_tags_path()
     mtime = p.stat().st_mtime if p.exists() else None
-    if _TAGS_CACHE["mtime"] != mtime:
-        _TAGS_CACHE.update(mtime=mtime, table=load_series_tags(), notes=tag_notes())
+    if _TAGS_CACHE.get("path") != p or _TAGS_CACHE["mtime"] != mtime:
+        _TAGS_CACHE.update(path=p, mtime=mtime, table=load_series_tags(), notes=tag_notes())
     return _TAGS_CACHE["table"], _TAGS_CACHE["notes"]
 
 DIM_STRUCT = pl.Struct({"id": pl.String, "name": pl.String, "code": pl.String, "label": pl.String})
